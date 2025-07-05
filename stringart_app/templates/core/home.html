@@ -1,51 +1,115 @@
-<!-- templates/core/home.html -->
+<!-- stringart_app/templates/core/home.html -->
+{% load static %}
 <!DOCTYPE html>
 <html lang="en-gb">
 <head>
   <meta charset="utf-8">
   <title>String Art Prototype</title>
   <style>
-    body { font-family: sans-serif; margin: 2em; }
-    img { max-width: 100%; height: auto; display: block; margin-bottom: 1em; }
-    pre { background: #f4f4f4; padding: 1em; overflow-x: auto; }
+    body {
+      font-family: sans-serif;
+      max-width: 800px;
+      margin: 2em auto;
+      line-height: 1.5;
+    }
+    h1, h2 {
+      margin-bottom: 0.5em;
+    }
+    /* Removed box styling from upload-section */
+    .upload-section {
+      margin-bottom: 2em;
+    }
+    .preview-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1em;
+      margin-bottom: 2em;
+    }
+    .preview-grid img,
+    .preview-grid canvas {
+      width: 100%;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+    details {
+      margin-bottom: 1em;
+    }
+    pre {
+      background: #f9f9f9;
+      padding: 1em;
+      overflow-x: auto;
+      border: 1px solid #eee;
+      border-radius: 4px;
+      max-height: 300px;
+    }
+    button {
+      margin-top: 0.5em;
+      padding: 0.5em 1em;
+      border: none;
+      background: #007bff;
+      color: white;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #0056b3;
+    }
   </style>
 </head>
 <body>
   <h1>String Art Prototype</h1>
 
-  <form method="post" enctype="multipart/form-data">
-    {% csrf_token %}
-    <label for="image">Upload Image (PNG/JPG/JPEG):</label><br>
-    <input type="file" name="image" id="image" accept=".png,.jpg,.jpeg" required>
-    <button type="submit">Process</button>
-  </form>
+  <section class="upload-section">
+    <h2>1. Upload an Image</h2>
+    <form method="post" enctype="multipart/form-data">
+      {% csrf_token %}
+      <input type="file" name="image" id="image" accept=".png,.jpg,.jpeg" required>
+      <button type="submit">Process</button>
+    </form>
+  </section>
 
   {% if processed_image %}
     <section>
-      <h2>Grayscale Image</h2>
-      <img src="data:image/png;base64,{{ processed_image }}" alt="Grayscale version">
-    </section>
-  {% endif %}
-
-  {% if vector_preview %}
-    <section>
-      <h2>Vector-Only Preview</h2>
-      <img src="data:image/png;base64,{{ vector_preview }}" alt="Lines only">
-    </section>
-  {% endif %}
-
-  {% if overlay_preview %}
-    <section>
-      <h2>Overlay Preview</h2>
-      <img src="data:image/png;base64,{{ overlay_preview }}" alt="Overlay of lines on greyscale">
+      <h2>2. Original &amp; Grayscale</h2>
+      <div class="preview-grid">
+        <div>
+          <h3>Original</h3>
+          <img src="data:image/png;base64,{{ original_image }}" alt="Original upload">
+        </div>
+        <div>
+          <h3>Grayscale (200×200)</h3>
+          <img src="data:image/png;base64,{{ processed_image }}" alt="Grayscale version">
+        </div>
+      </div>
     </section>
   {% endif %}
 
   {% if vectors %}
     <section>
-      <h2>Vector List (JSON)</h2>
-      <pre>{{ vectors|safe }}</pre>
+      <h2>3. Vectors</h2>
+      <details>
+        <summary>Show vector list ({{ vectors|length }} items)</summary>
+        <pre>{{ vectors|safe }}</pre>
+      </details>
+    </section>
+
+    <section>
+      <h2>4. Physics Preview</h2>
+      <div class="preview-grid">
+        <div>
+          <h3>Physics Preview</h3>
+          <canvas
+            id="physicsCanvas"
+            width="200"
+            height="200"
+            data-anchors='{{ anchors_json|escape }}'
+            data-vectors='{{ vectors_json|escape }}'>
+          </canvas>
+        </div>
+      </div>
     </section>
   {% endif %}
+
+  <script type="module" src="{% static 'js/main.js' %}"></script>
 </body>
 </html>
