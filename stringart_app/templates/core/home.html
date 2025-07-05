@@ -55,46 +55,81 @@
     </div>
   </section>
 
-  {% if test_results %}
-    <section>
-      <h2>Results (Grayscale + Physics)</h2>
-      <div class="preview-grid">
-        {% for t in test_results %}
-          <div>
-            <h3>{{ t.name }}</h3>
-            <img
-              src="data:image/png;base64,{{ t.processed_image }}"
-              alt="{{ t.name }} (grayscale)"
-            >
+  <section>
+    <h2>Results (Grayscale + Physics)</h2>
+    <div class="preview-grid" id="results-container">
+      <!-- Processed images & canvases will stream in here -->
+    </div>
+  </section>
 
-            <!-- Collapsible vector list showing count -->
-            <details>
-              <summary>Show vector list ({{ t.vectors_count }} vectors)</summary>
-              <pre class="vectors">{{ t.vectors_json }}</pre>
-            </details>
-
-            <canvas
-              class="physicsCanvas"
-              width="200"
-              height="200"
-              data-anchors='{{ t.anchors_json|escape }}'
-              data-vectors='{{ t.vectors_json|escape }}'
-            ></canvas>
-          </div>
-        {% endfor %}
-      </div>
-    </section>
-  {% endif %}
-
+  <!-- Core physics init (unused for now) -->
   <script type="module" src="{% static 'js/main.js' %}"></script>
+
+  <!-- SSE for logs -->
   <script>
-    // Open SSE connection to stream new log lines as they occur
     const evtSource = new EventSource("{% url 'stream_logs' %}");
     const logPre = document.getElementById("log-content");
     evtSource.onmessage = e => {
       logPre.textContent += e.data + "\n";
-      const container = document.getElementById("debug-terminal");
-      container.scrollTop = container.scrollHeight;
+      document.getElementById("debug-terminal").scrollTop =
+        document.getElementById("debug-terminal").scrollHeight;
+    };
+  </script>
+
+  <!-- SSE + dynamic appending for results -->
+  <script type="module">
+    import { createPhysicsRenderer } from "{% static 'js/physics_renderer.js' %}";
+
+    const resultsContainer = document.getElementById("results-container");
+    const resSource = new EventSource("{% url 'stream_results' %}");
+
+    resSource.onmessage = e => {
+      const t = JSON.parse(e.data);
+
+      // 1) Create wrapper & title
+      const wrapper = document.createElement("div");
+      const title = document.createElement("h3");
+      title.textContent = t.name;
+      wrapper.appendChild(title);
+
+      // 2) Create and append the grayscale <img> immediately
+      const img = document.createElement("img");
+      img.src = `data:image/png;base64,${t.processed_image}`;
+      img.alt = `${t.name} (grayscale)`;
+      wrapper.appendChild(img);
+
+      // 3) Create & append the <details> block
+      const details = document.createElement("details");
+      const summary = document.createElement("summary");
+      summary.textContent = `Show vector list (${t.vectors_count} vectors)`;
+      const pre = document.createElement("pre");
+      pre.className = "vectors";
+      pre.textContent = t.vectors_json;
+      details.appendChild(summary);
+      details.appendChild(pre);
+      wrapper.appendChild(details);
+
+      // 4) Append wrapper to container so user sees it right away
+      resultsContainer.appendChild(wrapper);
+
+      // 5) In the next tick, create & initialize the physics canvas
+      setTimeout(() => {
+        const canvas = document.createElement("canvas");
+        canvas.className = "physicsCanvas";
+        canvas.width = 200;
+        canvas.height = 200;
+        canvas.dataset.anchors = t.anchors_json;
+        canvas.dataset.vectors = t.vectors_json;
+        wrapper.appendChild(canvas);
+
+        try {
+          const anchors = JSON.parse(canvas.dataset.anchors);
+          const vectors = JSON.parse(canvas.dataset.vectors);
+          createPhysicsRenderer(canvas, anchors, vectors);
+        } catch (err) {
+          console.error("Failed to init physicsCanvas for", t.name, err);
+        }
+      }, 0);
     };
   </script>
 </body>

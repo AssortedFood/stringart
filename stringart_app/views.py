@@ -9,6 +9,7 @@ import contextlib
 
 from django.http import StreamingHttpResponse
 from django.shortcuts import render
+from django.views.decorators.http import require_GET
 from PIL import Image
 import numpy as np
 
@@ -17,8 +18,10 @@ from .planner import generate_string_vectors, ALGORITHMS
 
 DEBUG = True
 
-# In-memory queue of log lines for Server-Sent Events
+# In-memory queues for Server-Sent Events
 LOG_QUEUE: list[str] = []
+RESULTS_QUEUE: list[dict] = []
+
 
 def make_logger(log_list):
     """
@@ -36,6 +39,7 @@ def make_logger(log_list):
             # Append to global queue (for live streaming)
             LOG_QUEUE.append(line)
     return _log
+
 
 def home(request):
     # Prepare context and per-request log buffer
@@ -59,8 +63,9 @@ def home(request):
 
     # --- if POST, process them all ---
     if request.method == 'POST':
-        # Clear out any previous logs so we start fresh
+        # Clear out any previous logs and results so we start fresh
         LOG_QUEUE.clear()
+        RESULTS_QUEUE.clear()
 
         _log(f"Batch-processing {len(img_paths)} images with '{algo_key}'")
         test_results = []
@@ -96,7 +101,7 @@ def home(request):
             for line in buf.getvalue().splitlines():
                 _log(line)
 
-            # JSON for physics
+            # Prepare JSON for front-end
             anchors_json = json.dumps(anchors)
             vectors_json = json.dumps(vectors)
             vectors_count = len(vectors)
@@ -106,13 +111,17 @@ def home(request):
             img_small.save(img_buf, format="PNG")
             processed_b64 = base64.b64encode(img_buf.getvalue()).decode("ascii")
 
-            test_results.append({
+            result = {
                 "name": name,
                 "processed_image": processed_b64,
                 "anchors_json": anchors_json,
                 "vectors_json": vectors_json,
                 "vectors_count": vectors_count,
-            })
+            }
+
+            # append to both the page context list and the SSE queue
+            test_results.append(result)
+            RESULTS_QUEUE.append(result)
 
         context['test_results'] = test_results
 
@@ -131,6 +140,25 @@ def stream_logs(request):
                 msg = LOG_QUEUE[last_idx]
                 last_idx += 1
                 yield f"data: {msg}\n\n".encode('utf-8')
+            time.sleep(0.2)
+
+    return StreamingHttpResponse(event_stream(), content_type='text/event-stream')
+
+
+@require_GET
+def stream_results(request):
+    """
+    Server-Sent Events endpoint that streams each processed-image payload
+    (grayscale + vectors) from RESULTS_QUEUE as JSON.
+    """
+    def event_stream():
+        last_idx = 0
+        while True:
+            while last_idx < len(RESULTS_QUEUE):
+                payload = RESULTS_QUEUE[last_idx]
+                last_idx += 1
+                # send JSON payload
+                yield f"data: {json.dumps(payload)}\n\n".encode('utf-8')
             time.sleep(0.2)
 
     return StreamingHttpResponse(event_stream(), content_type='text/event-stream')
