@@ -1,0 +1,35 @@
+# Byte-compiled / Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+env/
+*.env
+
+# Git
+.git
+.gitignore
+
+# Test outputs
+.pytest_cache/
+coverage.xml
+htmlcov/
+
+# Django stuff
+*.sqlite3
+media/
+node_modules/
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+
+# IDEs, editors
+.vscode/
+.idea/
+*.swp
+
+# Logs
+*.log
