@@ -1,0 +1,51 @@
+<!-- templates/core/home.html -->
+<!DOCTYPE html>
+<html lang="en-gb">
+<head>
+  <meta charset="utf-8">
+  <title>String Art Prototype</title>
+  <style>
+    body { font-family: sans-serif; margin: 2em; }
+    img { max-width: 100%; height: auto; display: block; margin-bottom: 1em; }
+    pre { background: #f4f4f4; padding: 1em; overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <h1>String Art Prototype</h1>
+
+  <form method="post" enctype="multipart/form-data">
+    {% csrf_token %}
+    <label for="image">Upload Image (PNG/JPG/JPEG):</label><br>
+    <input type="file" name="image" id="image" accept=".png,.jpg,.jpeg" required>
+    <button type="submit">Process</button>
+  </form>
+
+  {% if processed_image %}
+    <section>
+      <h2>Grayscale Image</h2>
+      <img src="data:image/png;base64,{{ processed_image }}" alt="Grayscale version">
+    </section>
+  {% endif %}
+
+  {% if vector_preview %}
+    <section>
+      <h2>Vector-Only Preview</h2>
+      <img src="data:image/png;base64,{{ vector_preview }}" alt="Lines only">
+    </section>
+  {% endif %}
+
+  {% if overlay_preview %}
+    <section>
+      <h2>Overlay Preview</h2>
+      <img src="data:image/png;base64,{{ overlay_preview }}" alt="Overlay of lines on greyscale">
+    </section>
+  {% endif %}
+
+  {% if vectors %}
+    <section>
+      <h2>Vector List (JSON)</h2>
+      <pre>{{ vectors|safe }}</pre>
+    </section>
+  {% endif %}
+</body>
+</html>
