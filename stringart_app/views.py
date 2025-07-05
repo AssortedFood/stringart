@@ -3,6 +3,7 @@
 import base64
 import json
 from io import BytesIO
+from pathlib import Path
 
 from django.shortcuts import render
 from PIL import Image
@@ -20,74 +21,62 @@ def _log(msg: str):
 def home(request):
     context = {}
 
-    # Always provide the list of available algorithms and a default selection
+    # --- algorithm controls ---
+    algo_key = request.POST.get('algorithm', request.GET.get('algorithm', 'greedy'))
+    if algo_key not in ALGORITHMS:
+        algo_key = 'greedy'
     context['algorithms'] = list(ALGORITHMS.keys())
-    context['selected_algorithm'] = 'greedy'
+    context['selected_algorithm'] = algo_key
 
-    _log(f"home() called with method={request.method}")
+    # --- discover test images ---
+    TEST_DIR = Path(__file__).parent / "static" / "test_images"
+    _log(f"Looking for test images in {TEST_DIR}")
+    img_paths = sorted(TEST_DIR.glob("*.[jp][pn]g"))
+    # just names for static/<test_images>/<name>
+    context['test_images'] = [p.name for p in img_paths]
 
-    if request.method == 'POST' and request.FILES.get('image'):
-        img_file = request.FILES['image']
-        _log(f"Received POST / with image upload: {img_file.name}")
+    # --- if POST, process them all ---
+    if request.method == 'POST':
+        _log(f"Batch-processing {len(img_paths)} images with '{algo_key}'")
+        test_results = []
 
-        # Load the original image and keep a copy for display
-        img = Image.open(img_file)
-        orig_w, orig_h = img.size
-        _log(f"Loaded image into PIL; original mode={img.mode}, size={orig_w}×{orig_h}")
+        for p in img_paths:
+            name = p.stem
+            _log(f"Processing {p.name}")
 
-        # Encode original upload for template
-        buf0 = BytesIO()
-        img.save(buf0, format='PNG')
-        context['original_image'] = base64.b64encode(buf0.getvalue()).decode('ascii')
-        _log(f"Encoded original image to base64 ({len(context['original_image'])} chars)")
+            # load + grayscale + resize
+            img = Image.open(p).convert("L")
+            TARGET_SIZE = (200, 200)
+            img_small = img.resize(TARGET_SIZE, Image.Resampling.LANCZOS)
+            pixels = np.array(img_small)
 
-        # Convert to grayscale
-        img = img.convert('L')
-        _log("Converted image to grayscale (L mode)")
+            # generate vectors
+            vectors = generate_string_vectors(
+                pixels,
+                n_anchors=180,
+                n_strings=200,
+                line_thickness=1,
+                sample_pairs=1000,
+                algorithm=algo_key,
+            )
 
-        # Resize
-        TARGET_SIZE = (200, 200)
-        _log(f"Resizing image to target dimensions {TARGET_SIZE[0]}×{TARGET_SIZE[1]} using LANCZOS")
-        img_small = img.resize(TARGET_SIZE, Image.Resampling.LANCZOS)
+            # anchors + JSON for physics
+            anchors = generate_radial_anchors(180, *TARGET_SIZE)
+            anchors_json = json.dumps(anchors)
+            vectors_json = json.dumps(vectors)
 
-        # Prepare pixel data
-        pixels = np.array(img_small)
-        _log(f"Converted resized image to NumPy array with shape {pixels.shape} and dtype {pixels.dtype}")
+            # encode grayscale PNG
+            buf = BytesIO()
+            img_small.save(buf, format="PNG")
+            processed_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
 
-        # Choose algorithm (from dropdown or default)
-        algo_key = request.POST.get('algorithm') or 'greedy'
-        _log(f"Using algorithm: {algo_key}")
-        context['selected_algorithm'] = algo_key
+            test_results.append({
+                "name": name,
+                "processed_image": processed_b64,
+                "anchors_json": anchors_json,
+                "vectors_json": vectors_json,
+            })
 
-        # Generate vectors
-        _log("Starting generate_string_vectors")
-        vectors = generate_string_vectors(
-            pixels,
-            n_anchors=180,
-            n_strings=200,
-            line_thickness=1,
-            sample_pairs=1000,
-            algorithm=algo_key,
-        )
-        _log(f"generate_string_vectors returned {len(vectors)} vectors")
-        context['vectors'] = vectors
-
-        # Prepare JSON for physics renderer
-        anchors = generate_radial_anchors(180, *img_small.size)
-        context['anchors_json'] = json.dumps(anchors)
-        context['vectors_json'] = json.dumps(vectors)
-
-        # Encode grayscale display
-        buf = BytesIO()
-        img_small.save(buf, format='PNG')
-        processed_b64 = base64.b64encode(buf.getvalue()).decode('ascii')
-        context['processed_image'] = processed_b64
-        _log(f"Encoded processed grayscale image to base64 ({len(processed_b64)} chars)")
-
-        _log(f"Final context keys: {list(context.keys())}")
-
-    else:
-        if request.method == 'POST':
-            _log("POST received but no image file found in request.FILES; skipping processing")
+        context['test_results'] = test_results
 
     return render(request, 'core/home.html', context)
