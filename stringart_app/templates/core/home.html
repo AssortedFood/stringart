@@ -4,7 +4,7 @@
 <html lang="en-gb">
 <head>
   <meta charset="utf-8">
-  <title>String Art Prototype — Test Suite</title>
+  <title>String Art Prototype - Test Suite</title>
   <style>
     body {
       font-family: sans-serif;
@@ -46,10 +46,32 @@
     button:hover {
       background: #0056b3;
     }
+    /* Styles for collapsible vector list */
+    details {
+      margin: 0.5em 0;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      padding: 0.5em;
+      background: #f9f9f9;
+    }
+    summary {
+      font-weight: bold;
+      cursor: pointer;
+    }
+    pre.vectors {
+      max-height: 150px;
+      overflow: auto;
+      background: #fff;
+      padding: 0.5em;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 0.9em;
+      line-height: 1.3;
+    }
   </style>
 </head>
 <body>
-  <h1>String Art Prototype — Test Suite</h1>
+  <h1>String Art Prototype - Test Suite</h1>
 
   <section class="controls">
     <form method="post">
@@ -92,6 +114,13 @@
               src="data:image/png;base64,{{ t.processed_image }}"
               alt="{{ t.name }} (grayscale)"
             >
+
+            <!-- Collapsible vector list showing count -->
+            <details>
+              <summary>Show vector list ({{ t.vectors_count }} vectors)</summary>
+              <pre class="vectors">{{ t.vectors_json }}</pre>
+            </details>
+
             <canvas
               class="physicsCanvas"
               width="200"

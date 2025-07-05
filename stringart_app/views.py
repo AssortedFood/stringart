@@ -64,6 +64,7 @@ def home(request):
             anchors = generate_radial_anchors(180, *TARGET_SIZE)
             anchors_json = json.dumps(anchors)
             vectors_json = json.dumps(vectors)
+            vectors_count = len(vectors)
 
             # encode grayscale PNG
             buf = BytesIO()
@@ -75,6 +76,7 @@ def home(request):
                 "processed_image": processed_b64,
                 "anchors_json": anchors_json,
                 "vectors_json": vectors_json,
+                "vectors_count": vectors_count,
             })
 
         context['test_results'] = test_results
