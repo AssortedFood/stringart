@@ -64,6 +64,16 @@
     <form method="post" enctype="multipart/form-data">
       {% csrf_token %}
       <input type="file" name="image" id="image" accept=".png,.jpg,.jpeg" required>
+
+      <label for="algorithm">Algorithm:</label>
+      <select name="algorithm" id="algorithm">
+        {% for key in algorithms %}
+          <option value="{{ key }}" {% if key == selected_algorithm %}selected{% endif %}>
+            {{ key|capfirst }}
+          </option>
+        {% endfor %}
+      </select>
+
       <button type="submit">Process</button>
     </form>
   </section>

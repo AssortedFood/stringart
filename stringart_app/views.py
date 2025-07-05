@@ -9,7 +9,7 @@ from PIL import Image
 import numpy as np
 
 from .renderer import generate_radial_anchors
-from .planner import generate_string_vectors
+from .planner import generate_string_vectors, ALGORITHMS
 
 DEBUG = True
 
@@ -19,6 +19,10 @@ def _log(msg: str):
 
 def home(request):
     context = {}
+
+    # Always provide the list of available algorithms and a default selection
+    context['algorithms'] = list(ALGORITHMS.keys())
+    context['selected_algorithm'] = 'greedy'
 
     _log(f"home() called with method={request.method}")
 
@@ -50,14 +54,20 @@ def home(request):
         pixels = np.array(img_small)
         _log(f"Converted resized image to NumPy array with shape {pixels.shape} and dtype {pixels.dtype}")
 
+        # Choose algorithm (from dropdown or default)
+        algo_key = request.POST.get('algorithm') or 'greedy'
+        _log(f"Using algorithm: {algo_key}")
+        context['selected_algorithm'] = algo_key
+
         # Generate vectors
-        _log("Starting generate_string_vectors (n_anchors=180, n_strings=200, sample_pairs=1000)")
+        _log("Starting generate_string_vectors")
         vectors = generate_string_vectors(
             pixels,
             n_anchors=180,
             n_strings=200,
             line_thickness=1,
-            sample_pairs=1000
+            sample_pairs=1000,
+            algorithm=algo_key,
         )
         _log(f"generate_string_vectors returned {len(vectors)} vectors")
         context['vectors'] = vectors
