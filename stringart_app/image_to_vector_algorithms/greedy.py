@@ -116,7 +116,7 @@ class GreedyAlgorithm(StringArtAlgorithm):
                 i_idx, j_idx = all_pairs[k]
 
                 # draw the line on a temp canvas
-                temp = Image.fromarray(canvas.astype(np.uint8), mode='L')
+                temp = Image.fromarray(canvas.astype(np.uint8))
                 draw = ImageDraw.Draw(temp)
                 draw.line([anchors[i_idx], anchors[j_idx]], fill=0, width=line_thickness)
                 temp_canvas = np.array(temp, dtype=np.int16)
