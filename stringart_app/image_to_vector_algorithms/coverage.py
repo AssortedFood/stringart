@@ -4,14 +4,26 @@ import numpy as np
 from typing import List, Dict
 from PIL import Image, ImageDraw
 
+from skimage.feature import canny
+from skimage.transform import probabilistic_hough_line
+
 from .base import StringArtAlgorithm
 from ..renderer import generate_radial_anchors
 
 class CoverageMulticoverAlgorithm(StringArtAlgorithm):
     """
-    At each step pick the anchor-pair whose line covers the most
-    of the *remaining* darkness map.
+    1. Detect prominent line segments via Canny+Hough.
+    2. Snap each segment’s endpoints to the nearest radial anchors.
+    3. Run multicover on this reduced set of candidate chords.
     """
+
+    # Hough parameters
+    HOUGH_THRESHOLD   = 10
+    HOUGH_LINE_LENGTH = 30
+    HOUGH_LINE_GAP    = 5
+
+    # length‐normalization exponent (0 = no normalization, 1 = full length penalty)
+    ALPHA = 0.5
 
     def generate(
         self,
@@ -19,50 +31,79 @@ class CoverageMulticoverAlgorithm(StringArtAlgorithm):
         n_anchors: int = 180,
         n_strings: int = 200,
         line_thickness: int = 1,
-        sample_pairs: int = 1000  # unused here, but kept for signature compatibility
+        sample_pairs: int = 1000  # unused here
     ) -> List[Dict[str, int]]:
         height, width = pixels.shape
 
-        # 1. Linearize to float so that dark → large (0 = white, 1 = black)
+        # 1. Build darkness map: (0=white → 1=black)
         target = (255.0 - pixels.astype(np.float32)) / 255.0
+        target_flat = target.ravel()
 
-        # 2. Generate anchor coords
+        # 2. Generate our anchor coordinates
         anchors = generate_radial_anchors(n_anchors, width, height)
+        anchors_arr = np.array(anchors, dtype=float)  # (n_anchors × 2)
 
-        # 3. Precompute a binary mask (H×W) for each possible line ℓ = (i,j)
-        all_pairs = [(i, j) for i in range(n_anchors) for j in range(i+1, n_anchors)]
-        line_masks = []
+        # 3. Edge‐detect + Hough to get a small set of segments
+        edges = canny(pixels / 255.0)
+        segments = probabilistic_hough_line(
+            edges,
+            threshold=self.HOUGH_THRESHOLD,
+            line_length=self.HOUGH_LINE_LENGTH,
+            line_gap=self.HOUGH_LINE_GAP
+        )
+
+        # 4. Snap each segment’s endpoints to nearest anchor index
+        pair_set = set()
+        for (p0, p1) in segments:
+            p0, p1 = np.array(p0), np.array(p1)
+            i = int(np.linalg.norm(anchors_arr - p0, axis=1).argmin())
+            j = int(np.linalg.norm(anchors_arr - p1, axis=1).argmin())
+            if i != j:
+                pair_set.add((min(i, j), max(i, j)))
+        all_pairs = list(pair_set)
+
+        # If Hough gave too few candidates, fall back to full enumeration
+        if len(all_pairs) < 100:
+            all_pairs = [(i, j) for i in range(n_anchors) for j in range(i+1, n_anchors)]
+
+        # 5. Precompute chord‐lengths for normalization
+        lengths = np.array([
+            np.hypot(anchors[i][0] - anchors[j][0], anchors[i][1] - anchors[j][1])
+            for i, j in all_pairs
+        ], dtype=np.float32)
+        norm_factors = lengths**self.ALPHA + 1e-6
+
+        # 6. Precompute binary masks only for this reduced set
+        masks_flat = []
         for (i, j) in all_pairs:
             img = Image.new('L', (width, height), color=0)
             draw = ImageDraw.Draw(img)
             draw.line([anchors[i], anchors[j]], fill=255, width=line_thickness)
-            mask = np.array(img, dtype=bool)  # True where the string would lie
-            line_masks.append(mask)
+            masks_flat.append(np.array(img, dtype=bool).ravel())
 
-        # 4. Flatten masks and target once for dot-product use
-        target_flat = target.ravel()
-        masks_flat  = [mask.ravel() for mask in line_masks]
+        # 7. Precompute raw coverage for subtraction
+        raw_cov = np.array([m.dot(target_flat) for m in masks_flat], dtype=np.float32)
 
-        # 5. Initial coverage score for each line = inner(mask_flat, target_flat)
-        coverage = np.array([m.dot(target_flat) for m in masks_flat], dtype=np.float32)
-
-        # 6. Iteratively pick the best line, subtract its mask from the residual map
+        # 8. Iteratively pick the best line (normalized), subtract from residual
         vectors: List[Dict[str, int]] = []
         residual = target_flat.copy()
 
         for _ in range(n_strings):
-            # 6a. Compute score = inner(mask_flat, residual)
-            scores = np.array([m.dot(residual) for m in masks_flat], dtype=np.float32)
+            # compute raw scores, then normalize by chord length^α
+            raw_scores = np.array([m.dot(residual) for m in masks_flat], dtype=np.float32)
+            scores = raw_scores / norm_factors
+
             best_idx = int(np.argmax(scores))
             if scores[best_idx] <= 0:
-                break  # nothing left to cover
+                break
 
-            # 6b. Record the chosen vector
             i, j = all_pairs[best_idx]
             vectors.append({"from": i, "to": j})
 
-            # 6c. Subtract that mask’s contribution, clamped to ≥0
-            subtraction = masks_flat[best_idx] * (scores[best_idx] / coverage[best_idx])
-            residual = np.maximum(residual - subtraction, 0.0)
+            # subtract proportional to raw coverage
+            residual = np.maximum(
+                residual - masks_flat[best_idx] * (raw_scores[best_idx] / raw_cov[best_idx]),
+                0.0
+            )
 
         return vectors
