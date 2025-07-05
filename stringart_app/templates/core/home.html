@@ -24,54 +24,74 @@
   <div class="page-content">
     <h1>String Art Prototype</h1>
 
+    <!-- STEP 1: Upload Images -->
     <section class="controls">
-      <form id="algo-form" method="post" action=".">
+      <form id="upload-form" method="post" enctype="multipart/form-data" action=".">
         {% csrf_token %}
         <fieldset>
-          <legend>Shades of Grey</legend>
-          <label>
-            <input
-              type="number"
-              name="levels"
-              min="2" max="256"
-              value="{{ levels|default:8 }}"
-            >
-            levels
-          </label>
+          <legend>Upload Image(s)</legend>
+          <input type="file" name="images" accept="image/*" multiple required>
         </fieldset>
-        <fieldset>
-          <legend>Run algorithms:</legend>
-          {% for key in algorithms %}
-            <label>
-              <input
-                type="checkbox"
-                name="algorithms"
-                value="{{ key }}"
-                {% if key in selected_algorithms %}checked{% endif %}
-              >
-              {{ key|capfirst }}
-            </label>
-          {% endfor %}
-        </fieldset>
-        <button type="submit">Run</button>
+        <button type="submit">Load Preview</button>
       </form>
     </section>
 
-    <section>
-      <h2>Raw Test Images</h2>
-      <div class="preview-grid">
-        {% for name in test_images %}
-          <div>
-            <h3>{{ name }}</h3>
-            <img
-              src="{% static 'test_images/'|add:name %}"
-              alt="{{ name }}"
-            >
-          </div>
-        {% endfor %}
-      </div>
-    </section>
+    <!-- STEP 2: Preview Uploaded Images -->
+    {% if uploaded_images %}
+      <section id="preview-section">
+        <h2>Preview</h2>
+        <div class="preview-grid">
+          {% for img in uploaded_images %}
+            <div>
+              <h3>{{ img.name }}</h3>
+              <img src="data:image/png;base64,{{ img.data }}" alt="{{ img.name }}">
+            </div>
+          {% endfor %}
+        </div>
 
+        <!-- STEP 3: Run Algorithms on Previewed Images -->
+        <form id="algo-form" method="post" action=".">
+          {% csrf_token %}
+          <input type="hidden" name="run_algos" value="1">
+
+          {# Hidden fields to carry image data into the second POST #}
+          {% for img in uploaded_images %}
+            <input type="hidden" name="image_name" value="{{ img.name }}">
+            <input type="hidden" name="image_data" value="{{ img.data }}">
+          {% endfor %}
+
+          <fieldset>
+            <legend>Shades of Grey</legend>
+            <label>
+              <input
+                type="number"
+                name="levels"
+                min="2" max="256"
+                value="{{ levels|default:8 }}"
+              >
+              levels
+            </label>
+          </fieldset>
+          <fieldset>
+            <legend>Run algorithms:</legend>
+            {% for key in algorithms %}
+              <label>
+                <input
+                  type="checkbox"
+                  name="algorithms"
+                  value="{{ key }}"
+                  {% if key in selected_algorithms %}checked{% endif %}
+                >
+                {{ key|capfirst }}
+              </label>
+            {% endfor %}
+          </fieldset>
+          <button type="submit">Run Algorithms</button>
+        </form>
+      </section>
+    {% endif %}
+
+    <!-- RESULTS STREAM -->
     <section id="results-section" style="display:none;">
       <h2>Results</h2>
       <div id="results-container">
@@ -86,30 +106,23 @@
     <pre id="log-content"></pre>
   </section>
 
-  <!-- Core physics init (unused for now) -->
   <script type="module" src="{% static 'js/main.js' %}"></script>
-
   <script type="module">
     import { createPhysicsRenderer } from "{% static 'js/physics_renderer.js' %}";
 
     let evtSourceLogs, evtSourceResults;
-    let currentPhase = null;
-    let currentAlgo = null;
-    let currentRow = null;
+    let currentPhase = null, currentAlgo = null, currentRow = null;
 
     function capFirst(str) {
       return str.charAt(0).toUpperCase() + str.slice(1);
     }
 
     function startStreams() {
-      if (evtSourceLogs) evtSourceLogs.close();
-      if (evtSourceResults) evtSourceResults.close();
-
       // Clear logs
       const logEl = document.getElementById('log-content');
       logEl.textContent = '';
 
-      // Show results and logs
+      // Reveal the results & log sections
       document.getElementById('results-section').style.display = '';
       document.getElementById('debug-section').style.display = '';
 
@@ -125,62 +138,58 @@
       evtSourceResults = new EventSource("{% url 'stream_results' %}");
       evtSourceResults.onmessage = e => {
         const t = JSON.parse(e.data);
-
         if (t.phase !== currentPhase) {
           currentPhase = t.phase;
           currentAlgo = null;
-          const phaseHeading = document.createElement("h2");
-          phaseHeading.textContent = capFirst(currentPhase);
-          container.appendChild(phaseHeading);
+          const h = document.createElement('h2');
+          h.textContent = capFirst(currentPhase);
+          container.appendChild(h);
         }
-
         if (t.phase === 'grayscale') {
           if (!currentRow) {
-            currentRow = document.createElement("div");
-            currentRow.className = "preview-grid";
+            currentRow = document.createElement('div');
+            currentRow.className = 'preview-grid';
             container.appendChild(currentRow);
           }
-          const img = document.createElement("img");
+          const img = document.createElement('img');
           img.src = `data:image/png;base64,${t.processed_image}`;
           img.alt = t.name;
           currentRow.appendChild(img);
-
         } else if (t.phase === 'algorithm') {
           if (t.algorithm !== currentAlgo) {
             currentAlgo = t.algorithm;
-            currentRow = document.createElement("div");
-            currentRow.className = "preview-grid";
-
-            const algoHeading = document.createElement("h3");
-            algoHeading.textContent = capFirst(currentAlgo);
-            container.appendChild(algoHeading);
+            currentRow = document.createElement('div');
+            currentRow.className = 'preview-grid';
+            const h3 = document.createElement('h3');
+            h3.textContent = capFirst(currentAlgo);
+            container.appendChild(h3);
             container.appendChild(currentRow);
           }
+          const cell = document.createElement('div');
 
-          const cell = document.createElement("div");
-
-          const details = document.createElement("details");
-          const summary = document.createElement("summary");
+          const details = document.createElement('details');
+          const summary = document.createElement('summary');
           summary.textContent = `Show vectors (${t.vectors_count})`;
-          const preVec = document.createElement("pre");
-          preVec.className = "vectors";
+          const preVec = document.createElement('pre');
+          preVec.className = 'vectors';
           preVec.textContent = JSON.stringify(JSON.parse(t.vectors_json), null, 2);
           details.appendChild(summary);
           details.appendChild(preVec);
           cell.appendChild(details);
 
-          const canvas = document.createElement("canvas");
-          canvas.className = "physicsCanvas";
-          canvas.width = 200;
-          canvas.height = 200;
+          const canvas = document.createElement('canvas');
+          canvas.className = 'physicsCanvas';
+          canvas.width = 200; canvas.height = 200;
           canvas.dataset.anchors = t.anchors_json;
           canvas.dataset.vectors = t.vectors_json;
           cell.appendChild(canvas);
 
           setTimeout(() => {
-            const anchors = JSON.parse(canvas.dataset.anchors);
-            const vectors = JSON.parse(canvas.dataset.vectors);
-            createPhysicsRenderer(canvas, anchors, vectors);
+            createPhysicsRenderer(
+              canvas,
+              JSON.parse(canvas.dataset.anchors),
+              JSON.parse(canvas.dataset.vectors)
+            );
           }, 0);
 
           currentRow.appendChild(cell);
@@ -188,14 +197,14 @@
       };
     }
 
-    window.addEventListener('DOMContentLoaded', () => {
-      const form = document.getElementById('algo-form');
-      form.addEventListener('submit', e => {
+    document.addEventListener('DOMContentLoaded', () => {
+      // When "Run Algorithms" form submits, kick off SSE streams
+      document.getElementById('algo-form')?.addEventListener('submit', e => {
         e.preventDefault();
-        fetch(form.action, {
+        fetch('.', {
           method: 'POST',
-          body: new FormData(form),
-          headers: { 'X-Requested-With': 'XMLHttpRequest' },
+          body: new FormData(e.target),
+          headers: {'X-Requested-With': 'XMLHttpRequest'},
         });
         startStreams();
       });

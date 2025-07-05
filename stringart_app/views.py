@@ -48,49 +48,58 @@ def home(request):
 
     # --- algorithm controls (multiple selection) ---
     if request.method == 'POST':
-        # getlist returns [] if none; default to all algorithms
-        selected_algorithms = request.POST.getlist('algorithms')
-        if not selected_algorithms:
-            selected_algorithms = list(ALGORITHMS.keys())
+        selected_algorithms = request.POST.getlist('algorithms') or list(ALGORITHMS.keys())
     else:
-        # on initial GET, preselect all algorithms by default
         selected_algorithms = list(ALGORITHMS.keys())
 
-    # sanitize selection
-    selected_algorithms = [a for a in selected_algorithms if a in ALGORITHMS]
-    if not selected_algorithms:
-        selected_algorithms = list(ALGORITHMS.keys())
-
+    selected_algorithms = [a for a in selected_algorithms if a in ALGORITHMS] or list(ALGORITHMS.keys())
     context['algorithms'] = list(ALGORITHMS.keys())
     context['selected_algorithms'] = selected_algorithms
 
-    # --- discover test images ---
-    TEST_DIR = Path(__file__).parent / "static" / "test_images"
-    _log(f"Looking for test images in {TEST_DIR}")
-    img_paths = sorted(TEST_DIR.glob("*.[jp][pn]g"))
-    context['test_images'] = [p.name for p in img_paths]
+    uploaded = []
+    # --- handle uploads & previews ---
+    if request.method == 'POST' and request.FILES.getlist('images') and not request.POST.get('run_algos'):
+        for f in request.FILES.getlist('images'):
+            name = f.name
+            data = f.read()
+            img = Image.open(BytesIO(data)).convert('RGB')
+            img.thumbnail((200, 200), Image.Resampling.LANCZOS)
+            buf = BytesIO()
+            img.save(buf, format='PNG')
+            b64 = base64.b64encode(buf.getvalue()).decode('ascii')
+            uploaded.append({'name': name, 'data': b64})
+        context['uploaded_images'] = uploaded
+        # just render preview, no processing yet
+        return render(request, 'core/home.html', context)
 
-    # --- if POST, process them all in two phases ---
-    if request.method == 'POST':
-        # reset any previous logs and streams
+    # --- if user clicked "Run Algorithms" ---
+    if request.method == 'POST' and request.POST.get('run_algos'):
+        # rebuild files dict from hidden base64 fields
+        names = request.POST.getlist('image_name')
+        datas = request.POST.getlist('image_data')
+        files = {
+            name: base64.b64decode(data)
+            for name, data in zip(names, datas)
+        }
+
         LOG_QUEUE.clear()
         RESULTS_QUEUE.clear()
 
         TARGET_SIZE = (200, 200)
+        levels = int(request.POST.get('levels', 8))
 
         # Phase 1: grayscale pass
-        _log(f"=== Phase 1: grayscale-only for {len(img_paths)} images ===")
-        for p in img_paths:
-            name = p.stem
-            _log(f"[grayscale] Loading {p.name}")
+        _log(f"=== Phase 1: grayscale-only for {len(files)} images ===")
+        for name, data in files.items():
+            stem = Path(name).stem
+            _log(f"[grayscale] Loading {name}")
             pixels = load_image_to_pixels(
-                path=p,
+                path=BytesIO(data),
                 size=TARGET_SIZE,
-                levels=8,
+                levels=levels,
                 gamma=0.8,
                 autocontrast=True
             )
-
             img_small = Image.fromarray(pixels, mode='L')
             buf_img = BytesIO()
             img_small.save(buf_img, format="PNG")
@@ -99,26 +108,23 @@ def home(request):
             RESULTS_QUEUE.append({
                 "phase": "grayscale",
                 "algorithm": None,
-                "name": name,
+                "name": stem,
                 "processed_image": b64,
             })
 
         # Phase 2: run each selected algorithm over all images
         for algo_key in selected_algorithms:
             _log(f"=== Phase 2: algorithm '{algo_key}' ===")
-            for p in img_paths:
-                name = p.stem
-                _log(f"[{algo_key}] Loading & processing {p.name}")
-
+            for name, data in files.items():
+                stem = Path(name).stem
+                _log(f"[{algo_key}] Loading & processing {name}")
                 pixels = load_image_to_pixels(
-                    path=p,
+                    path=BytesIO(data),
                     size=TARGET_SIZE,
-                    levels=8,
+                    levels=levels,
                     gamma=0.8,
                     autocontrast=True
                 )
-
-                # capture algorithm output and logs
                 buf = StringIO()
                 with contextlib.redirect_stdout(buf):
                     vectors = generate_string_vectors(
@@ -132,7 +138,6 @@ def home(request):
                 for line in buf.getvalue().splitlines():
                     _log(line)
 
-                # capture anchor generation logs
                 buf2 = StringIO()
                 with contextlib.redirect_stdout(buf2):
                     anchors = generate_radial_anchors(180, *TARGET_SIZE)
@@ -142,14 +147,11 @@ def home(request):
                 RESULTS_QUEUE.append({
                     "phase": "algorithm",
                     "algorithm": algo_key,
-                    "name": name,
+                    "name": stem,
                     "anchors_json": json.dumps(anchors),
                     "vectors_json": json.dumps(vectors),
                     "vectors_count": len(vectors),
                 })
-
-        # (Optionally) expose a sync list in context if your template uses it
-        context['test_results'] = RESULTS_QUEUE
 
     return render(request, 'core/home.html', context)
 
