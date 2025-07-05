@@ -6,6 +6,7 @@ import numpy as np
 from .base import StringArtAlgorithm
 from .greedy import GreedyAlgorithm
 from .coverage import CoverageMulticoverAlgorithm
+from .graph_optimisation import GraphOptimisationAlgorithm
 # import other algorithms here as you add them:
 # from .image_to_vector_algorithms.random import RandomPairAlgorithm
 
@@ -13,6 +14,7 @@ from .coverage import CoverageMulticoverAlgorithm
 ALGORITHMS: Dict[str, StringArtAlgorithm] = {
     "greedy": GreedyAlgorithm(),
     "coverage": CoverageMulticoverAlgorithm(),
+    "graph": GraphOptimisationAlgorithm(),
     # "random": RandomPairAlgorithm(),
     # add new ones here...
 }
