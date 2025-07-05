@@ -21,70 +21,69 @@
   <link rel="icon" type="image/x-icon" href="{% static 'favicon.ico' %}">
 </head>
 <body>
-  <h1>String Art Prototype</h1>
+  <div class="page-content">
+    <h1>String Art Prototype</h1>
 
-  <section class="controls">
-    <form id="algo-form" method="post" action=".">
-      {% csrf_token %}
-      <!-- New: Shades of Grey control -->
-      <fieldset>
-        <legend>Shades of Grey</legend>
-        <label>
-          <input
-            type="number"
-            name="levels"
-            min="2" max="256"
-            value="{{ levels|default:8 }}"
-          >
-          levels
-        </label>
-      </fieldset>
-      <fieldset>
-        <legend>Run algorithms:</legend>
-        {% for key in algorithms %}
+    <section class="controls">
+      <form id="algo-form" method="post" action=".">
+        {% csrf_token %}
+        <fieldset>
+          <legend>Shades of Grey</legend>
           <label>
             <input
-              type="checkbox"
-              name="algorithms"
-              value="{{ key }}"
-              {% if key in selected_algorithms %}checked{% endif %}
+              type="number"
+              name="levels"
+              min="2" max="256"
+              value="{{ levels|default:8 }}"
             >
-            {{ key|capfirst }}
+            levels
           </label>
-        {% endfor %}
-      </fieldset>
-      <button type="submit">Run</button>
-    </form>
-  </section>
+        </fieldset>
+        <fieldset>
+          <legend>Run algorithms:</legend>
+          {% for key in algorithms %}
+            <label>
+              <input
+                type="checkbox"
+                name="algorithms"
+                value="{{ key }}"
+                {% if key in selected_algorithms %}checked{% endif %}
+              >
+              {{ key|capfirst }}
+            </label>
+          {% endfor %}
+        </fieldset>
+        <button type="submit">Run</button>
+      </form>
+    </section>
 
-  <!-- Debug terminal: hidden until Run -->
+    <section>
+      <h2>Raw Test Images</h2>
+      <div class="preview-grid">
+        {% for name in test_images %}
+          <div>
+            <h3>{{ name }}</h3>
+            <img
+              src="{% static 'test_images/'|add:name %}"
+              alt="{{ name }}"
+            >
+          </div>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section id="results-section" style="display:none;">
+      <h2>Results</h2>
+      <div id="results-container">
+        <!-- Each phase will create its own heading + .preview-grid -->
+      </div>
+    </section>
+  </div>
+
+  <!-- Logs at the bottom; only visible when scrolled into view -->
   <section id="debug-section" style="display:none;">
     <h2>Logs</h2>
-    <div id="debug-terminal">
-      <pre id="log-content"></pre>
-    </div>
-  </section>
-
-  <section>
-    <h2>Raw Test Images</h2>
-    <div class="preview-grid">
-      {% for name in test_images %}
-        <div>
-          <h3>{{ name }}</h3>
-          <img
-            src="{% static 'test_images/'|add:name %}"
-            alt="{{ name }}"
-          >
-        </div>
-      {% endfor %}
-    </div>
-  </section>
-
-  <section id="results-section" style="display:none;">
-    <h2>Results</h2>
-    <div id="results-container">
-      <!-- Each phase will create its own heading + .preview-grid -->
-    </div>
+    <pre id="log-content"></pre>
   </section>
 
   <!-- Core physics init (unused for now) -->
@@ -106,39 +105,36 @@
       if (evtSourceLogs) evtSourceLogs.close();
       if (evtSourceResults) evtSourceResults.close();
 
-      document.getElementById('log-content').textContent = '';
-      const container = document.getElementById('results-container');
-      container.innerHTML = '';
-      currentPhase = null;
-      currentAlgo = null;
-      currentRow = null;
+      // Clear logs
+      const logEl = document.getElementById('log-content');
+      logEl.textContent = '';
 
-      document.getElementById('debug-section').style.display = '';
+      // Show results and logs
       document.getElementById('results-section').style.display = '';
+      document.getElementById('debug-section').style.display = '';
 
+      // Stream logs
       evtSourceLogs = new EventSource("{% url 'stream_logs' %}");
       evtSourceLogs.onmessage = e => {
-        const line = e.data + "\n";
-        document.getElementById("log-content").textContent += line;
-        const dbg = document.getElementById("debug-terminal");
-        dbg.scrollTop = dbg.scrollHeight;
+        logEl.textContent += e.data + "\n";
+        logEl.scrollTop = logEl.scrollHeight;
       };
 
+      // Stream results
+      const container = document.getElementById('results-container');
       evtSourceResults = new EventSource("{% url 'stream_results' %}");
       evtSourceResults.onmessage = e => {
         const t = JSON.parse(e.data);
 
-        // Phase header
         if (t.phase !== currentPhase) {
           currentPhase = t.phase;
-          currentAlgo = null;  // reset algorithm grouping when phase changes
+          currentAlgo = null;
           const phaseHeading = document.createElement("h2");
           phaseHeading.textContent = capFirst(currentPhase);
           container.appendChild(phaseHeading);
         }
 
         if (t.phase === 'grayscale') {
-          // First time grayscale, start its grid
           if (!currentRow) {
             currentRow = document.createElement("div");
             currentRow.className = "preview-grid";
@@ -150,10 +146,8 @@
           currentRow.appendChild(img);
 
         } else if (t.phase === 'algorithm') {
-          // New algorithm within algorithm phase?
           if (t.algorithm !== currentAlgo) {
             currentAlgo = t.algorithm;
-            // start a fresh grid for this algorithm
             currentRow = document.createElement("div");
             currentRow.className = "preview-grid";
 
@@ -163,18 +157,16 @@
             container.appendChild(currentRow);
           }
 
-          // append result cell
           const cell = document.createElement("div");
 
           const details = document.createElement("details");
           const summary = document.createElement("summary");
           summary.textContent = `Show vectors (${t.vectors_count})`;
-          const pre = document.createElement("pre");
-          pre.className = "vectors";
-          const arr = JSON.parse(t.vectors_json);
-          pre.textContent = JSON.stringify(arr, null, 2);
+          const preVec = document.createElement("pre");
+          preVec.className = "vectors";
+          preVec.textContent = JSON.stringify(JSON.parse(t.vectors_json), null, 2);
           details.appendChild(summary);
-          details.appendChild(pre);
+          details.appendChild(preVec);
           cell.appendChild(details);
 
           const canvas = document.createElement("canvas");
@@ -185,7 +177,6 @@
           canvas.dataset.vectors = t.vectors_json;
           cell.appendChild(canvas);
 
-          // start physics-render
           setTimeout(() => {
             const anchors = JSON.parse(canvas.dataset.anchors);
             const vectors = JSON.parse(canvas.dataset.vectors);

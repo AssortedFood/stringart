@@ -9,6 +9,7 @@ body {
   max-width: 1000px;
   margin: 2em auto;
   line-height: 1.5;
+  padding-bottom: 0; /* no extra bottom padding */
 }
 
 h1, h2, h3 {
@@ -78,20 +79,29 @@ pre.vectors {
   white-space: pre-wrap;    /* wrap long lines if needed */
 }
 
-/* Debug terminal “Solarized dark” style */
-#debug-terminal {
+/* Log pane appears naturally at the end of page flow */
+#debug-section {
+  margin-top: 2em;      /* space above results */
+  /* remove any background or shadow */
+  background: none;
+  box-shadow: none;
+  padding: 0;
+}
+
+/* “Solarized” style directly on the <pre> */
+#log-content {
   background: #002b36;   /* base02 */
   color:      #839496;   /* base0 */
   font-family: monospace;
   padding:    1em;
-  margin-top: 1em;
   border-radius: 4px;
   max-height: 200px;
   overflow-y: auto;
-  box-shadow: 0 0 8px rgba(0,0,0,0.5);
+  white-space: pre-wrap;
+  box-shadow: 0 0 8px rgba(0,0,0,0.2);  /* subtle depth */
 }
 
-#debug-terminal pre {
-  margin: 0;
-  white-space: pre-wrap;
+/* Adjust spacing below the Logs heading */
+#debug-section h2 {
+  margin-bottom: 0.5em;
 }
