@@ -3,7 +3,19 @@
 from PIL import Image, ImageOps
 import numpy as np
 
-def load_image_to_pixels(path, size=None, levels=8, gamma=1.0, autocontrast=True):
+# === Configuration ===
+# How many distinct gray‐levels to quantize to.
+# Increase or decrease this to control the number of overlapping string layers.
+DEFAULT_LEVELS = 8
+
+
+def load_image_to_pixels(
+    path,
+    size=None,
+    levels: int = DEFAULT_LEVELS,
+    gamma: float = 1.0,
+    autocontrast: bool = True
+) -> np.ndarray:
     """
     Load an image from `path`, convert to grayscale, optionally resize,
     autocontrast, apply gamma correction, then quantize to `levels` gray values.
