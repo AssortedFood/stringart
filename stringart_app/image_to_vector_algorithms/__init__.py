@@ -1,16 +1,18 @@
-# stringart_app/planner.py
+# stringart_app/image_to_vector_algorithms/__init__.py
 
 from typing import List, Dict
 import numpy as np
 
 from .base import StringArtAlgorithm
 from .greedy import GreedyAlgorithm
+from .coverage import CoverageMulticoverAlgorithm
 # import other algorithms here as you add them:
 # from .image_to_vector_algorithms.random import RandomPairAlgorithm
 
 # === registry of available strategies ===
 ALGORITHMS: Dict[str, StringArtAlgorithm] = {
     "greedy": GreedyAlgorithm(),
+    "coverage": CoverageMulticoverAlgorithm(),
     # "random": RandomPairAlgorithm(),
     # add new ones here...
 }
