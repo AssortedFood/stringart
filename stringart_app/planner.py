@@ -1,9 +1,16 @@
 # stringart_app/planner.py
 
+import time
 import numpy as np
 from .renderer import generate_radial_anchors
 from PIL import Image, ImageDraw
 from typing import List, Dict
+
+DEBUG = True
+
+def _log(msg: str):
+    if DEBUG:
+        print(msg)
 
 def generate_string_vectors(
     pixels: np.ndarray,
@@ -17,6 +24,10 @@ def generate_string_vectors(
     produce up to `n_strings` string-art vectors (anchor index pairs).
     Uses a greedy algorithm sampling `sample_pairs` candidates per iteration.
     """
+    _log(f"Starting generate_string_vectors: n_anchors={n_anchors}, "
+         f"n_strings={n_strings}, line_thickness={line_thickness}, sample_pairs={sample_pairs}")
+    start_time = time.time()
+
     height, width = pixels.shape
     canvas: np.ndarray = np.full_like(pixels, 255, dtype=np.int16)
     anchors = generate_radial_anchors(n_anchors, width, height)
@@ -26,20 +37,25 @@ def generate_string_vectors(
     all_pairs = [(i, j)
                  for i in range(n_anchors)
                  for j in range(i + 1, n_anchors)]
+    _log(f"Precomputed total possible anchor pairs: {len(all_pairs)}")
 
-    for _ in range(n_strings):
+    before_error = np.sum((canvas - pixels) ** 2)
+    _log(f"Initial error (canvas vs. target): {before_error}")
+
+    for i in range(n_strings):
+        _log(f"Iteration {i+1}/{n_strings} started")
         best_improvement = 0
         best_pair = None
         best_canvas = None
 
-        before_error = np.sum((canvas - pixels) ** 2)
-
         # sample a subset of pairs each iteration
         if sample_pairs < len(all_pairs):
             idxs = np.random.choice(len(all_pairs), size=sample_pairs, replace=False)
-            candidates = [all_pairs[i] for i in idxs]
+            candidates = [all_pairs[k] for k in idxs]
+            _log(f"  Sampled {len(candidates)} pairs from {len(all_pairs)} total")
         else:
             candidates = all_pairs
+            _log(f"  Using all {len(candidates)} candidate pairs")
 
         for a_idx, b_idx in candidates:
             # Assert to narrow type: canvas is definitely an ndarray here
@@ -59,10 +75,16 @@ def generate_string_vectors(
                 best_canvas = temp_canvas
 
         if best_pair is None:
+            _log(f"  No improvement found in iteration {i+1}; breaking early")
             break
 
-        # best_canvas was set whenever best_pair is not None
+        # Apply best found
         canvas = best_canvas  # type: ignore[assignment]
         vectors.append({"from": best_pair[0], "to": best_pair[1]})
+        _log(f"  Iteration {i+1}: chose pair {best_pair} with improvement {best_improvement}")
+        before_error -= best_improvement  # update error for next round
+
+    elapsed = time.time() - start_time
+    _log(f"Completed generate_string_vectors in {elapsed:.2f}s; total vectors: {len(vectors)}")
 
     return vectors

@@ -1,6 +1,6 @@
 # TODO
 
-- debug flags and logging
+- ~~debug flags and logging~~
 - create physics renderer to interpret string vector instructions
     - generate one example set of instructions
     - create the blank 360 circle nodes
