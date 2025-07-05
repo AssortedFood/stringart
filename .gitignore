@@ -26,3 +26,6 @@ htmlcov/
 .vscode/
 *.sublime-project
 *.sublime-workspace
+
+# SQLite DB
+db.sqlite3

@@ -39,7 +39,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'core',  # ← our string-art app
+    'stringart_app',  # ← our string-art app
 ]
 
 MIDDLEWARE = [
