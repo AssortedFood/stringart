@@ -59,6 +59,9 @@ def home(request):
 
     # --- if POST, process them all ---
     if request.method == 'POST':
+        # Clear out any previous logs so we start fresh
+        LOG_QUEUE.clear()
+
         _log(f"Batch-processing {len(img_paths)} images with '{algo_key}'")
         test_results = []
 
@@ -114,6 +117,7 @@ def home(request):
         context['test_results'] = test_results
 
     return render(request, 'core/home.html', context)
+
 
 def stream_logs(request):
     """
