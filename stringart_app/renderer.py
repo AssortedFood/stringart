@@ -1,4 +1,4 @@
-# core/renderer.py
+# stringart_app/renderer.py
 
 import math
 from PIL import Image, ImageDraw

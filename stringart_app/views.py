@@ -1,4 +1,4 @@
-# core/views.py
+# stringart_app/views.py
 
 import base64
 from io import BytesIO
@@ -17,7 +17,8 @@ def home(request):
         # Load & downscale
         img = Image.open(request.FILES['image']).convert('L')
         TARGET_SIZE = (200, 200)
-        img_small = img.resize(TARGET_SIZE, Image.LANCZOS)
+        # Use the Resampling enum for LANCZOS per newest Pillow typings
+        img_small = img.resize(TARGET_SIZE, Image.Resampling.LANCZOS)
         pixels = np.array(img_small)
 
         # Generate vectors

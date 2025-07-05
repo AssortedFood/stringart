@@ -1,4 +1,4 @@
-# core/preprocessing.py
+# stringart_app/preprocessing.py
 
 from PIL import Image
 import numpy as np

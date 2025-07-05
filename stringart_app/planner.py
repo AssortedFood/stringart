@@ -1,8 +1,9 @@
-# core/planner.py
+# stringart_app/planner.py
 
 import numpy as np
 from .renderer import generate_radial_anchors
 from PIL import Image, ImageDraw
+from typing import List, Dict
 
 def generate_string_vectors(
     pixels: np.ndarray,
@@ -10,16 +11,16 @@ def generate_string_vectors(
     n_strings: int = 200,
     line_thickness: int = 1,
     sample_pairs: int = 1000
-):
+) -> List[Dict[str, int]]:
     """
     Given a small grayscale pixel map `pixels` (2D uint8 array),
     produce up to `n_strings` string-art vectors (anchor index pairs).
     Uses a greedy algorithm sampling `sample_pairs` candidates per iteration.
     """
     height, width = pixels.shape
-    canvas = np.full_like(pixels, 255, dtype=np.int16)
+    canvas: np.ndarray = np.full_like(pixels, 255, dtype=np.int16)
     anchors = generate_radial_anchors(n_anchors, width, height)
-    vectors = []
+    vectors: List[Dict[str, int]] = []
 
     # Precompute all possible pairs once
     all_pairs = [(i, j)
@@ -41,6 +42,8 @@ def generate_string_vectors(
             candidates = all_pairs
 
         for a_idx, b_idx in candidates:
+            # Assert to narrow type: canvas is definitely an ndarray here
+            assert isinstance(canvas, np.ndarray)
             temp_img = Image.fromarray(canvas.astype(np.uint8), mode='L')
             draw = ImageDraw.Draw(temp_img)
             draw.line([anchors[a_idx], anchors[b_idx]],
@@ -58,7 +61,8 @@ def generate_string_vectors(
         if best_pair is None:
             break
 
-        canvas = best_canvas
+        # best_canvas was set whenever best_pair is not None
+        canvas = best_canvas  # type: ignore[assignment]
         vectors.append({"from": best_pair[0], "to": best_pair[1]})
 
     return vectors
