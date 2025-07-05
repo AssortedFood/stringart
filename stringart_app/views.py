@@ -15,6 +15,7 @@ import numpy as np
 
 from .renderer import generate_radial_anchors
 from .planner import generate_string_vectors, ALGORITHMS
+from .preprocessing import load_image_to_pixels  # ← your new loader
 
 DEBUG = True
 
@@ -74,11 +75,22 @@ def home(request):
             name = p.stem
             _log(f"Processing {p.name}")
 
-            # load + grayscale + resize
-            img = Image.open(p).convert("L")
+            # load + grayscale + resize + autocontrast/gamma/quantize
             TARGET_SIZE = (200, 200)
-            img_small = img.resize(TARGET_SIZE, Image.Resampling.LANCZOS)
-            pixels = np.array(img_small)
+            pixels = load_image_to_pixels(
+                path=p,
+                size=TARGET_SIZE,
+                levels=8,
+                gamma=0.8,
+                autocontrast=True
+            )
+
+            # (Optional) debug: ensure exactly 8 levels
+            unique = np.unique(pixels)
+            _log(f"  unique gray levels: {unique.tolist()}")
+
+            # rebuild a PIL image for display/output
+            img_small = Image.fromarray(pixels, mode='L')
 
             # --- capture prints during vector generation ---
             buf = StringIO()
