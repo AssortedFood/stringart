@@ -43,6 +43,12 @@ INSTALLED_APPS = [
     'stringart_app',  # ← our string-art app
 ]
 
+CSRF_TRUSTED_ORIGINS = [
+    "https://strings.synox.is",
+]
+
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
