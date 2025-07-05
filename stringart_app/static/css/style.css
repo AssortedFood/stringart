@@ -67,14 +67,15 @@ summary {
 }
 
 pre.vectors {
-  max-height: 150px;
-  overflow: auto;
+  max-height: 200px;        /* increase as desired */
+  overflow-y: auto;         /* vertical scroll */
   background: #fff;
   padding: 0.5em;
   border: 1px solid #ddd;
   border-radius: 4px;
   font-size: 0.9em;
   line-height: 1.3;
+  white-space: pre-wrap;    /* wrap long lines if needed */
 }
 
 /* Debug terminal “Solarized dark” style */

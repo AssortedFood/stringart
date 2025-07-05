@@ -24,20 +24,29 @@
   <h1>String Art Prototype</h1>
 
   <section class="controls">
-    <form method="post">
+    <form id="algo-form" method="post" action=".">
       {% csrf_token %}
-      <label for="algorithm">Algorithm:</label>
-      <select name="algorithm" id="algorithm">
+      <fieldset>
+        <legend>Run algorithms:</legend>
         {% for key in algorithms %}
-          <option value="{{ key }}" {% if key == selected_algorithm %}selected{% endif %}>
+          <label>
+            <input
+              type="checkbox"
+              name="algorithms"
+              value="{{ key }}"
+              {% if key in selected_algorithms %}checked{% endif %}
+            >
             {{ key|capfirst }}
-          </option>
+          </label>
         {% endfor %}
-      </select>
+      </fieldset>
       <button type="submit">Run</button>
     </form>
+  </section>
 
-    <!-- Debug terminal: live-updating via SSE -->
+  <!-- Debug terminal: hidden until Run -->
+  <section id="debug-section" style="display:none;">
+    <h2>Logs</h2>
     <div id="debug-terminal">
       <pre id="log-content"></pre>
     </div>
@@ -58,82 +67,116 @@
     </div>
   </section>
 
-  <section>
-    <h2>Results (Grayscale + Physics)</h2>
-    <div class="preview-grid" id="results-container">
-      <!-- Processed images & canvases will stream in here -->
+  <section id="results-section" style="display:none;">
+    <h2>Results</h2>
+    <div id="results-container">
+      <!-- Each phase will create its own heading + .preview-grid -->
     </div>
   </section>
 
   <!-- Core physics init (unused for now) -->
   <script type="module" src="{% static 'js/main.js' %}"></script>
 
-  <!-- SSE for logs -->
-  <script>
-    const evtSource = new EventSource("{% url 'stream_logs' %}");
-    const logPre = document.getElementById("log-content");
-    evtSource.onmessage = e => {
-      logPre.textContent += e.data + "\n";
-      document.getElementById("debug-terminal").scrollTop =
-        document.getElementById("debug-terminal").scrollHeight;
-    };
-  </script>
-
-  <!-- SSE + dynamic appending for results -->
   <script type="module">
     import { createPhysicsRenderer } from "{% static 'js/physics_renderer.js' %}";
 
-    const resultsContainer = document.getElementById("results-container");
-    const resSource = new EventSource("{% url 'stream_results' %}");
+    let evtSourceLogs, evtSourceResults;
+    let currentPhase = null;
+    let currentRow = null;
 
-    resSource.onmessage = e => {
-      const t = JSON.parse(e.data);
+    function capFirst(str) {
+      return str.charAt(0).toUpperCase() + str.slice(1);
+    }
 
-      // 1) Create wrapper & title
-      const wrapper = document.createElement("div");
-      const title = document.createElement("h3");
-      title.textContent = t.name;
-      wrapper.appendChild(title);
+    function startStreams() {
+      if (evtSourceLogs) evtSourceLogs.close();
+      if (evtSourceResults) evtSourceResults.close();
 
-      // 2) Create and append the grayscale <img> immediately
-      const img = document.createElement("img");
-      img.src = `data:image/png;base64,${t.processed_image}`;
-      img.alt = `${t.name} (grayscale)`;
-      wrapper.appendChild(img);
+      document.getElementById('log-content').textContent = '';
+      const container = document.getElementById('results-container');
+      container.innerHTML = '';
+      currentPhase = null;
+      currentRow = null;
 
-      // 3) Create & append the <details> block
-      const details = document.createElement("details");
-      const summary = document.createElement("summary");
-      summary.textContent = `Show vector list (${t.vectors_count} vectors)`;
-      const pre = document.createElement("pre");
-      pre.className = "vectors";
-      pre.textContent = t.vectors_json;
-      details.appendChild(summary);
-      details.appendChild(pre);
-      wrapper.appendChild(details);
+      document.getElementById('debug-section').style.display = '';
+      document.getElementById('results-section').style.display = '';
 
-      // 4) Append wrapper to container so user sees it right away
-      resultsContainer.appendChild(wrapper);
+      evtSourceLogs = new EventSource("{% url 'stream_logs' %}");
+      evtSourceLogs.onmessage = e => {
+        document.getElementById("log-content").textContent += e.data + "\n";
+        const dbg = document.getElementById("debug-terminal");
+        dbg.scrollTop = dbg.scrollHeight;
+      };
 
-      // 5) In the next tick, create & initialize the physics canvas
-      setTimeout(() => {
-        const canvas = document.createElement("canvas");
-        canvas.className = "physicsCanvas";
-        canvas.width = 200;
-        canvas.height = 200;
-        canvas.dataset.anchors = t.anchors_json;
-        canvas.dataset.vectors = t.vectors_json;
-        wrapper.appendChild(canvas);
+      evtSourceResults = new EventSource("{% url 'stream_results' %}");
+      evtSourceResults.onmessage = e => {
+        const t = JSON.parse(e.data);
 
-        try {
-          const anchors = JSON.parse(canvas.dataset.anchors);
-          const vectors = JSON.parse(canvas.dataset.vectors);
-          createPhysicsRenderer(canvas, anchors, vectors);
-        } catch (err) {
-          console.error("Failed to init physicsCanvas for", t.name, err);
+        // new phase? heading + grid
+        if (t.phase !== currentPhase) {
+          currentPhase = t.phase;
+          const heading = document.createElement("h3");
+          heading.textContent = capFirst(currentPhase);
+          container.appendChild(heading);
+
+          currentRow = document.createElement("div");
+          currentRow.className = "preview-grid";
+          container.appendChild(currentRow);
         }
-      }, 0);
-    };
+
+        // append items
+        if (t.phase === 'grayscale') {
+          const img = document.createElement("img");
+          img.src = `data:image/png;base64,${t.processed_image}`;
+          img.alt = t.name;
+          currentRow.appendChild(img);
+
+        } else if (t.phase === 'algorithm') {
+          const cell = document.createElement("div");
+
+          const details = document.createElement("details");
+          const summary = document.createElement("summary");
+          summary.textContent = `Show vectors (${t.vectors_count})`;
+          const pre = document.createElement("pre");
+          pre.className = "vectors";
+          // pretty-print each vector on its own line
+          const arr = JSON.parse(t.vectors_json);
+          pre.textContent = JSON.stringify(arr, null, 2);
+          details.appendChild(summary);
+          details.appendChild(pre);
+          cell.appendChild(details);
+
+          const canvas = document.createElement("canvas");
+          canvas.className = "physicsCanvas";
+          canvas.width = 200;
+          canvas.height = 200;
+          canvas.dataset.anchors = t.anchors_json;
+          canvas.dataset.vectors = t.vectors_json;
+          cell.appendChild(canvas);
+
+          setTimeout(() => {
+            const anchors = JSON.parse(canvas.dataset.anchors);
+            const vectors = JSON.parse(canvas.dataset.vectors);
+            createPhysicsRenderer(canvas, anchors, vectors);
+          }, 0);
+
+          currentRow.appendChild(cell);
+        }
+      };
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      const form = document.getElementById('algo-form');
+      form.addEventListener('submit', e => {
+        e.preventDefault();
+        fetch(form.action, {
+          method: 'POST',
+          body: new FormData(form),
+          headers: { 'X-Requested-With': 'XMLHttpRequest' },
+        });
+        startStreams();
+      });
+    });
   </script>
 </body>
 </html>

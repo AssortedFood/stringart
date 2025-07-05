@@ -15,7 +15,7 @@ import numpy as np
 
 from .renderer import generate_radial_anchors
 from .planner import generate_string_vectors, ALGORITHMS
-from .preprocessing import load_image_to_pixels  # ← your new loader
+from .preprocessing import load_image_to_pixels  # ← your loader
 
 DEBUG = True
 
@@ -32,12 +32,9 @@ def make_logger(log_list):
     """
     def _log(msg: str):
         if DEBUG:
-            # Print to your server console
             print(msg)
-            # Strip trailing newlines and append to this request's logs
             line = msg.rstrip("\n")
             log_list.append(line)
-            # Append to global queue (for live streaming)
             LOG_QUEUE.append(line)
     return _log
 
@@ -49,12 +46,23 @@ def home(request):
     _log = make_logger(logs)
     context['logs'] = logs
 
-    # --- algorithm controls ---
-    algo_key = request.POST.get('algorithm', request.GET.get('algorithm', 'greedy'))
-    if algo_key not in ALGORITHMS:
-        algo_key = 'greedy'
+    # --- algorithm controls (multiple selection) ---
+    if request.method == 'POST':
+        # getlist returns [] if none; default to all algorithms
+        selected_algorithms = request.POST.getlist('algorithms')
+        if not selected_algorithms:
+            selected_algorithms = list(ALGORITHMS.keys())
+    else:
+        # on initial GET, preselect all algorithms by default
+        selected_algorithms = list(ALGORITHMS.keys())
+
+    # sanitize selection
+    selected_algorithms = [a for a in selected_algorithms if a in ALGORITHMS]
+    if not selected_algorithms:
+        selected_algorithms = list(ALGORITHMS.keys())
+
     context['algorithms'] = list(ALGORITHMS.keys())
-    context['selected_algorithm'] = algo_key
+    context['selected_algorithms'] = selected_algorithms
 
     # --- discover test images ---
     TEST_DIR = Path(__file__).parent / "static" / "test_images"
@@ -62,21 +70,19 @@ def home(request):
     img_paths = sorted(TEST_DIR.glob("*.[jp][pn]g"))
     context['test_images'] = [p.name for p in img_paths]
 
-    # --- if POST, process them all ---
+    # --- if POST, process them all in two phases ---
     if request.method == 'POST':
-        # Clear out any previous logs and results so we start fresh
+        # reset any previous logs and streams
         LOG_QUEUE.clear()
         RESULTS_QUEUE.clear()
 
-        _log(f"Batch-processing {len(img_paths)} images with '{algo_key}'")
-        test_results = []
+        TARGET_SIZE = (200, 200)
 
+        # Phase 1: grayscale pass
+        _log(f"=== Phase 1: grayscale-only for {len(img_paths)} images ===")
         for p in img_paths:
             name = p.stem
-            _log(f"Processing {p.name}")
-
-            # load + grayscale + resize + autocontrast/gamma/quantize
-            TARGET_SIZE = (200, 200)
+            _log(f"[grayscale] Loading {p.name}")
             pixels = load_image_to_pixels(
                 path=p,
                 size=TARGET_SIZE,
@@ -85,69 +91,76 @@ def home(request):
                 autocontrast=True
             )
 
-            # (Optional) debug: ensure exactly 8 levels
-            unique = np.unique(pixels)
-            _log(f"  unique gray levels: {unique.tolist()}")
-
-            # rebuild a PIL image for display/output
             img_small = Image.fromarray(pixels, mode='L')
+            buf_img = BytesIO()
+            img_small.save(buf_img, format="PNG")
+            b64 = base64.b64encode(buf_img.getvalue()).decode("ascii")
 
-            # --- capture prints during vector generation ---
-            buf = StringIO()
-            with contextlib.redirect_stdout(buf):
-                vectors = generate_string_vectors(
-                    pixels,
-                    n_anchors=180,
-                    n_strings=200,
-                    line_thickness=1,
-                    sample_pairs=1000,
-                    algorithm=algo_key,
-                )
-            for line in buf.getvalue().splitlines():
-                _log(line)
-
-            # --- capture prints during anchor generation ---
-            buf = StringIO()
-            with contextlib.redirect_stdout(buf):
-                anchors = generate_radial_anchors(180, *TARGET_SIZE)
-            for line in buf.getvalue().splitlines():
-                _log(line)
-
-            # Prepare JSON for front-end
-            anchors_json = json.dumps(anchors)
-            vectors_json = json.dumps(vectors)
-            vectors_count = len(vectors)
-
-            # encode grayscale PNG
-            img_buf = BytesIO()
-            img_small.save(img_buf, format="PNG")
-            processed_b64 = base64.b64encode(img_buf.getvalue()).decode("ascii")
-
-            result = {
+            RESULTS_QUEUE.append({
+                "phase": "grayscale",
+                "algorithm": None,
                 "name": name,
-                "processed_image": processed_b64,
-                "anchors_json": anchors_json,
-                "vectors_json": vectors_json,
-                "vectors_count": vectors_count,
-            }
+                "processed_image": b64,
+            })
 
-            # append to both the page context list and the SSE queue
-            test_results.append(result)
-            RESULTS_QUEUE.append(result)
+        # Phase 2: run each selected algorithm over all images
+        for algo_key in selected_algorithms:
+            _log(f"=== Phase 2: algorithm '{algo_key}' ===")
+            for p in img_paths:
+                name = p.stem
+                _log(f"[{algo_key}] Loading & processing {p.name}")
 
-        context['test_results'] = test_results
+                pixels = load_image_to_pixels(
+                    path=p,
+                    size=TARGET_SIZE,
+                    levels=8,
+                    gamma=0.8,
+                    autocontrast=True
+                )
+
+                # capture algorithm output and logs
+                buf = StringIO()
+                with contextlib.redirect_stdout(buf):
+                    vectors = generate_string_vectors(
+                        pixels,
+                        n_anchors=180,
+                        n_strings=200,
+                        line_thickness=1,
+                        sample_pairs=1000,
+                        algorithm=algo_key,
+                    )
+                for line in buf.getvalue().splitlines():
+                    _log(line)
+
+                # capture anchor generation logs
+                buf2 = StringIO()
+                with contextlib.redirect_stdout(buf2):
+                    anchors = generate_radial_anchors(180, *TARGET_SIZE)
+                for line in buf2.getvalue().splitlines():
+                    _log(line)
+
+                RESULTS_QUEUE.append({
+                    "phase": "algorithm",
+                    "algorithm": algo_key,
+                    "name": name,
+                    "anchors_json": json.dumps(anchors),
+                    "vectors_json": json.dumps(vectors),
+                    "vectors_count": len(vectors),
+                })
+
+        # (Optionally) expose a sync list in context if your template uses it
+        context['test_results'] = RESULTS_QUEUE
 
     return render(request, 'core/home.html', context)
 
 
 def stream_logs(request):
     """
-    Server-Sent Events endpoint that streams lines from LOG_QUEUE.
+    SSE endpoint streaming new lines from LOG_QUEUE.
     """
     def event_stream():
         last_idx = 0
         while True:
-            # Emit any new log lines
             while last_idx < len(LOG_QUEUE):
                 msg = LOG_QUEUE[last_idx]
                 last_idx += 1
@@ -160,8 +173,7 @@ def stream_logs(request):
 @require_GET
 def stream_results(request):
     """
-    Server-Sent Events endpoint that streams each processed-image payload
-    (grayscale + vectors) from RESULTS_QUEUE as JSON.
+    SSE endpoint streaming items from RESULTS_QUEUE as JSON.
     """
     def event_stream():
         last_idx = 0
@@ -169,7 +181,6 @@ def stream_results(request):
             while last_idx < len(RESULTS_QUEUE):
                 payload = RESULTS_QUEUE[last_idx]
                 last_idx += 1
-                # send JSON payload
                 yield f"data: {json.dumps(payload)}\n\n".encode('utf-8')
             time.sleep(0.2)
 
