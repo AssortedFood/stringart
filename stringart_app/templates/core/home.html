@@ -26,6 +26,19 @@
   <section class="controls">
     <form id="algo-form" method="post" action=".">
       {% csrf_token %}
+      <!-- New: Shades of Grey control -->
+      <fieldset>
+        <legend>Shades of Grey</legend>
+        <label>
+          <input
+            type="number"
+            name="levels"
+            min="2" max="256"
+            value="{{ levels|default:8 }}"
+          >
+          levels
+        </label>
+      </fieldset>
       <fieldset>
         <legend>Run algorithms:</legend>
         {% for key in algorithms %}
@@ -82,6 +95,7 @@
 
     let evtSourceLogs, evtSourceResults;
     let currentPhase = null;
+    let currentAlgo = null;
     let currentRow = null;
 
     function capFirst(str) {
@@ -96,6 +110,7 @@
       const container = document.getElementById('results-container');
       container.innerHTML = '';
       currentPhase = null;
+      currentAlgo = null;
       currentRow = null;
 
       document.getElementById('debug-section').style.display = '';
@@ -103,7 +118,8 @@
 
       evtSourceLogs = new EventSource("{% url 'stream_logs' %}");
       evtSourceLogs.onmessage = e => {
-        document.getElementById("log-content").textContent += e.data + "\n";
+        const line = e.data + "\n";
+        document.getElementById("log-content").textContent += line;
         const dbg = document.getElementById("debug-terminal");
         dbg.scrollTop = dbg.scrollHeight;
       };
@@ -112,26 +128,42 @@
       evtSourceResults.onmessage = e => {
         const t = JSON.parse(e.data);
 
-        // new phase? heading + grid
+        // Phase header
         if (t.phase !== currentPhase) {
           currentPhase = t.phase;
-          const heading = document.createElement("h3");
-          heading.textContent = capFirst(currentPhase);
-          container.appendChild(heading);
-
-          currentRow = document.createElement("div");
-          currentRow.className = "preview-grid";
-          container.appendChild(currentRow);
+          currentAlgo = null;  // reset algorithm grouping when phase changes
+          const phaseHeading = document.createElement("h2");
+          phaseHeading.textContent = capFirst(currentPhase);
+          container.appendChild(phaseHeading);
         }
 
-        // append items
         if (t.phase === 'grayscale') {
+          // First time grayscale, start its grid
+          if (!currentRow) {
+            currentRow = document.createElement("div");
+            currentRow.className = "preview-grid";
+            container.appendChild(currentRow);
+          }
           const img = document.createElement("img");
           img.src = `data:image/png;base64,${t.processed_image}`;
           img.alt = t.name;
           currentRow.appendChild(img);
 
         } else if (t.phase === 'algorithm') {
+          // New algorithm within algorithm phase?
+          if (t.algorithm !== currentAlgo) {
+            currentAlgo = t.algorithm;
+            // start a fresh grid for this algorithm
+            currentRow = document.createElement("div");
+            currentRow.className = "preview-grid";
+
+            const algoHeading = document.createElement("h3");
+            algoHeading.textContent = capFirst(currentAlgo);
+            container.appendChild(algoHeading);
+            container.appendChild(currentRow);
+          }
+
+          // append result cell
           const cell = document.createElement("div");
 
           const details = document.createElement("details");
@@ -139,7 +171,6 @@
           summary.textContent = `Show vectors (${t.vectors_count})`;
           const pre = document.createElement("pre");
           pre.className = "vectors";
-          // pretty-print each vector on its own line
           const arr = JSON.parse(t.vectors_json);
           pre.textContent = JSON.stringify(arr, null, 2);
           details.appendChild(summary);
@@ -154,6 +185,7 @@
           canvas.dataset.vectors = t.vectors_json;
           cell.appendChild(canvas);
 
+          // start physics-render
           setTimeout(() => {
             const anchors = JSON.parse(canvas.dataset.anchors);
             const vectors = JSON.parse(canvas.dataset.vectors);
