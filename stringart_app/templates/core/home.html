@@ -61,17 +61,39 @@
           {% endfor %}
 
           <fieldset>
-            <legend>Shades of Grey</legend>
+            <legend>Configuration</legend>
+
             <label>
+              Shades of Grey:
               <input
                 type="number"
                 name="levels"
                 min="2" max="256"
                 value="{{ levels|default:8 }}"
               >
-              levels
+            </label>
+
+            <label>
+              Number of Nodes:
+              <input
+                type="number"
+                name="n_anchors"
+                min="3" max="720"
+                value="{{ n_anchors|default:180 }}"
+              >
+            </label>
+
+            <label>
+              Number of Strings:
+              <input
+                type="number"
+                name="n_strings"
+                min="1" max="2000"
+                value="{{ n_strings|default:200 }}"
+              >
             </label>
           </fieldset>
+
           <fieldset>
             <legend>Run algorithms:</legend>
             {% for key in algorithms %}
@@ -86,7 +108,9 @@
               </label>
             {% endfor %}
           </fieldset>
+
           <button type="submit">Run Algorithms</button>
+          <button type="button" id="stop-btn" disabled>Stop</button>
         </form>
       </section>
     {% endif %}
@@ -112,30 +136,50 @@
 
     let evtSourceLogs, evtSourceResults;
     let currentPhase = null, currentAlgo = null, currentRow = null;
+    let currentJobId = null;
 
     function capFirst(str) {
       return str.charAt(0).toUpperCase() + str.slice(1);
     }
 
-    function startStreams() {
-      // Clear logs
-      const logEl = document.getElementById('log-content');
-      logEl.textContent = '';
+    function getCSRFToken() {
+      const match = document.cookie.match(/(^|;)\s*csrftoken=([^;]+)/);
+      return match ? match.pop() : '';
+    }
 
-      // Reveal the results & log sections
+    async function kickOffJob(form) {
+      const resp = await fetch('.', {
+        method: 'POST',
+        headers: {'X-Requested-With':'XMLHttpRequest'},
+        body: new FormData(form)
+      });
+      const data = await resp.json();
+      return data.job_id;
+    }
+
+    function startStreams(jobId) {
+      currentPhase = null;
+      currentAlgo = null;
+      currentRow = null;
+
+      // Clear logs & results
+      document.getElementById('log-content').textContent = '';
+      const container = document.getElementById('results-container');
+      container.innerHTML = '';
+
       document.getElementById('results-section').style.display = '';
       document.getElementById('debug-section').style.display = '';
 
       // Stream logs
-      evtSourceLogs = new EventSource("{% url 'stream_logs' %}");
+      evtSourceLogs = new EventSource(`{% url 'stream_logs' %}?job_id=${jobId}`);
       evtSourceLogs.onmessage = e => {
+        const logEl = document.getElementById('log-content');
         logEl.textContent += e.data + "\n";
         logEl.scrollTop = logEl.scrollHeight;
       };
 
       // Stream results
-      const container = document.getElementById('results-container');
-      evtSourceResults = new EventSource("{% url 'stream_results' %}");
+      evtSourceResults = new EventSource(`{% url 'stream_results' %}?job_id=${jobId}`);
       evtSourceResults.onmessage = e => {
         const t = JSON.parse(e.data);
         if (t.phase !== currentPhase) {
@@ -195,18 +239,32 @@
           currentRow.appendChild(cell);
         }
       };
+
+      // Enable Stop button
+      const stopBtn = document.getElementById('stop-btn');
+      stopBtn.disabled = false;
+      stopBtn.onclick = async () => {
+        if (!currentJobId) return;
+        await fetch(`/stop-job/${currentJobId}/`, {
+          method: 'POST',
+          headers: {'X-CSRFToken': getCSRFToken()},
+        });
+        stopBtn.disabled = true;
+      };
+
+      // Auto‐stop on unload
+      window.addEventListener('beforeunload', () => {
+        if (currentJobId) {
+          navigator.sendBeacon(`/stop-job/${currentJobId}/`);
+        }
+      });
     }
 
     document.addEventListener('DOMContentLoaded', () => {
-      // When "Run Algorithms" form submits, kick off SSE streams
-      document.getElementById('algo-form')?.addEventListener('submit', e => {
+      document.getElementById('algo-form')?.addEventListener('submit', async e => {
         e.preventDefault();
-        fetch('.', {
-          method: 'POST',
-          body: new FormData(e.target),
-          headers: {'X-Requested-With': 'XMLHttpRequest'},
-        });
-        startStreams();
+        currentJobId = await kickOffJob(e.target);
+        startStreams(currentJobId);
       });
     });
   </script>
