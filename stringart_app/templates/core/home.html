@@ -170,7 +170,7 @@
       document.getElementById('results-section').style.display = '';
       document.getElementById('debug-section').style.display = '';
 
-      // Stream logs
+      // Stream logs live
       evtSourceLogs = new EventSource(`{% url 'stream_logs' %}?job_id=${jobId}`);
       evtSourceLogs.onmessage = e => {
         const logEl = document.getElementById('log-content');
@@ -178,7 +178,7 @@
         logEl.scrollTop = logEl.scrollHeight;
       };
 
-      // Stream results
+      // Stream results live
       evtSourceResults = new EventSource(`{% url 'stream_results' %}?job_id=${jobId}`);
       evtSourceResults.onmessage = e => {
         const t = JSON.parse(e.data);
