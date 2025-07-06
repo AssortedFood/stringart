@@ -23,13 +23,11 @@ from PIL import Image
 
 import logging
 
-from .renderer import generate_radial_anchors
 from .planner import generate_string_vectors, ALGORITHMS
 from .preprocessing import load_image_to_pixels
 from .sse_logging import create_sse_logger
 
 # === Per-job registries ===
-# Used to track state across multiple concurrent jobs
 JOB_CANCEL_EVENTS: dict[str, threading.Event] = {}
 JOB_LOGS: dict[str, list[str]] = {}
 JOB_RESULTS: dict[str, list[dict]] = {}
@@ -51,13 +49,12 @@ def home(request):
             data = f.read()
             img = Image.open(BytesIO(data))
 
-            # If image has transparency, composite it over a white background
+            # Composite transparency over white
             if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
                 img = img.convert("RGBA")
-                white_bg = Image.new("RGBA", img.size, (255, 255, 255, 255))
-                img = Image.alpha_composite(white_bg, img)
+                bg = Image.new("RGBA", img.size, (255, 255, 255, 255))
+                img = Image.alpha_composite(bg, img)
 
-            # Drop alpha channel and ensure RGB
             img = img.convert("RGB")
             img.thumbnail((200, 200), Image.Resampling.LANCZOS)
 
@@ -82,7 +79,6 @@ def home(request):
         JOB_LOGS[job_id] = []
         JOB_RESULTS[job_id] = []
 
-        # Create a logger that writes into JOB_LOGS[job_id]
         logger = create_sse_logger(job_id, JOB_LOGS)
 
         names = request.POST.getlist('image_name')
@@ -140,20 +136,16 @@ def home(request):
                         autocontrast=True
                     )
 
-                    # Precompute anchors once
-                    anchors = generate_radial_anchors(n_anchors, *TARGET_SIZE)
-
-                    # Define callback to stream each vector pick
+                    # Callback streams one vector at a time, including node count
                     def on_vector(frm: int, to: int):
                         JOB_RESULTS[job_id].append({
                             "phase": "algorithm",
                             "algorithm": algo,
                             "name": stem,
-                            "anchors_json": json.dumps(anchors),
+                            "node_count": n_anchors,
                             "vector": {"from": frm, "to": to},
                         })
 
-                    # Run algorithm, streaming via callback
                     generate_string_vectors(
                         pixels,
                         n_anchors=n_anchors,
@@ -188,7 +180,6 @@ def stream_logs(request):
                 yield f"data: {logs[idx]}\n\n".encode()
                 idx += 1
             time.sleep(0.2)
-        # Clean up once done
         JOB_LOGS.pop(job_id, None)
         JOB_CANCEL_EVENTS.pop(job_id, None)
         JOB_RESULTS.pop(job_id, None)

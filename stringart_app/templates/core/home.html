@@ -130,13 +130,14 @@
     <pre id="log-content"></pre>
   </section>
 
-  <script type="module" src="{% static 'js/main.js' %}"></script>
   <script type="module">
+    import { StringArtStreamer } from '{% static "js/physics_renderer.js" %}';
+
     let evtSourceLogs, evtSourceResults;
     let currentPhase = null, currentAlgo = null, currentRow = null;
     let currentJobId = null;
 
-    // Map to hold contexts for each algorithm/image combo
+    // Map to hold StringArtStreamer instances per job/algo/image
     const canvasContexts = {};
 
     function capFirst(str) {
@@ -172,7 +173,7 @@
       document.getElementById('results-section').style.display = '';
       document.getElementById('debug-section').style.display = '';
 
-      // Stream logs live
+      // Stream logs
       evtSourceLogs = new EventSource(`{% url 'stream_logs' %}?job_id=${jobId}`);
       evtSourceLogs.onmessage = e => {
         const logEl = document.getElementById('log-content');
@@ -180,12 +181,12 @@
         logEl.scrollTop = logEl.scrollHeight;
       };
 
-      // Stream results live
+      // Stream results
       evtSourceResults = new EventSource(`{% url 'stream_results' %}?job_id=${jobId}`);
       evtSourceResults.onmessage = e => {
         const t = JSON.parse(e.data);
 
-        // Phase headers
+        // New phase header
         if (t.phase !== currentPhase) {
           currentPhase = t.phase;
           currentAlgo = null;
@@ -194,7 +195,7 @@
           container.appendChild(h);
         }
 
-        // Grayscale previews
+        // Grayscale thumbnails
         if (t.phase === 'grayscale') {
           if (!currentRow) {
             currentRow = document.createElement('div');
@@ -206,9 +207,8 @@
           img.alt = t.name;
           currentRow.appendChild(img);
 
-        // Algorithm streaming
+        // Algorithm canvases & vectors
         } else if (t.phase === 'algorithm') {
-          // New algorithm section
           if (t.algorithm !== currentAlgo || !currentRow) {
             currentAlgo = t.algorithm;
             currentRow = document.createElement('div');
@@ -220,7 +220,8 @@
           }
 
           const key = `${t.algorithm}::${t.name}`;
-          // On first vector event for this image, create its canvas
+
+          // On first vector: create canvas & streamer
           if (!canvasContexts[jobId][key]) {
             const cell = document.createElement('div');
 
@@ -233,36 +234,24 @@
             const canvas = document.createElement('canvas');
             canvas.width = 200;
             canvas.height = 200;
-            canvas.dataset.anchors = t.anchors_json;
             cell.appendChild(canvas);
             currentRow.appendChild(cell);
 
-            const ctx = canvas.getContext('2d');
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.lineWidth = 1;
-            // We'll set strokeStyle later once we know k_max, but for now solid
-            ctx.strokeStyle = 'rgba(0,0,0,1)';
-
-            // Parse anchors
-            const anchors = JSON.parse(t.anchors_json);
-            canvasContexts[jobId][key] = { ctx, anchors };
+            // Use the node_count sent in the SSE payload
+            const nodeCount = t.node_count;
+            const streamer = new StringArtStreamer(canvas, nodeCount);
+            canvasContexts[jobId][key] = streamer;
           }
 
-          // Draw single vector
+          // Draw incoming vector
           if (t.vector) {
-            const { ctx, anchors } = canvasContexts[jobId][key];
-            const { from, to } = t.vector;
-            const A = anchors[from];
-            const B = anchors[to];
-            ctx.beginPath();
-            ctx.moveTo(A[0], A[1]);
-            ctx.lineTo(B[0], B[1]);
-            ctx.stroke();
+            const streamer = canvasContexts[jobId][key];
+            streamer.addLine(t.vector.from, t.vector.to);
           }
         }
       };
 
-      // Enable Stop button
+      // Stop button
       const stopBtn = document.getElementById('stop-btn');
       stopBtn.disabled = false;
       stopBtn.onclick = async () => {
@@ -274,7 +263,7 @@
         stopBtn.disabled = true;
       };
 
-      // Auto‐stop on unload
+      // Auto-stop on unload
       window.addEventListener('beforeunload', () => {
         if (currentJobId) {
           navigator.sendBeacon(`/stop-job/${currentJobId}/`);
