@@ -1,6 +1,8 @@
 # stringart_app/image_to_vector_algorithms/base.py
-from typing import List, Dict
+
+from typing import List, Dict, Optional
 import numpy as np
+import logging
 
 class StringArtAlgorithm:
     """
@@ -12,9 +14,17 @@ class StringArtAlgorithm:
         n_anchors: int,
         n_strings: int,
         line_thickness: int,
-        sample_pairs: int
+        sample_pairs: int,
+        logger: Optional[logging.Logger] = None
     ) -> List[Dict[str, int]]:
         """
-        Given a grayscale pixel-map, return a list of up-to- n_strings {"from": i, "to": j} pairs.
+        Given a grayscale pixel-map, return a list of up-to-n_strings {"from": i, "to": j} pairs.
+
+        :param pixels: Grayscale pixel map
+        :param n_anchors: Number of radial anchor points
+        :param n_strings: Number of string connections to make
+        :param line_thickness: Thickness of each string
+        :param sample_pairs: Number of candidate pairs to sample per iteration
+        :param logger: Optional logger for debug/info messages
         """
         raise NotImplementedError("Must implement generate()")

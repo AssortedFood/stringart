@@ -1,7 +1,7 @@
 # stringart_app/image_to_vector_algorithms/coverage.py
 
 import numpy as np
-from typing import List, Dict
+from typing import List, Dict, Optional
 from PIL import Image, ImageDraw
 
 from skimage.feature import canny
@@ -9,13 +9,8 @@ from skimage.transform import probabilistic_hough_line
 
 from .base import StringArtAlgorithm
 from ..renderer import generate_radial_anchors
+import logging
 
-# Enable or disable debug logging
-DEBUG = True
-
-def _log(msg: str):
-    if DEBUG:
-        print(msg)
 
 class CoverageMulticoverAlgorithm(StringArtAlgorithm):
     """
@@ -38,20 +33,24 @@ class CoverageMulticoverAlgorithm(StringArtAlgorithm):
         n_anchors: int = 180,
         n_strings: int = 200,
         line_thickness: int = 1,
-        sample_pairs: int = 1000  # unused here
+        sample_pairs: int = 1000,  # unused here
+        logger: Optional[logging.Logger] = None
     ) -> List[Dict[str, int]]:
+        if logger is None:
+            logger = logging.getLogger(__name__)
+
         height, width = pixels.shape
-        _log(f"[coverage] Starting generate — anchors={n_anchors}, strings={n_strings}")
+        logger.debug(f"[coverage] Starting generate — anchors={n_anchors}, strings={n_strings}")
 
         # 1. Build darkness map: (0=white → 1=black)
         target = (255.0 - pixels.astype(np.float32)) / 255.0
         target_flat = target.ravel()
-        _log(f"[coverage] Built darkness map")
+        logger.debug("[coverage] Built darkness map")
 
         # 2. Generate our anchor coordinates
-        anchors = generate_radial_anchors(n_anchors, width, height)
+        anchors = generate_radial_anchors(n_anchors, width, height, logger=logger)
         anchors_arr = np.array(anchors, dtype=float)
-        _log(f"[coverage] Generated {len(anchors)} anchors")
+        logger.debug(f"[coverage] Generated {len(anchors)} anchors")
 
         # 3. Edge-detect + Hough to get a small set of segments
         edges = canny(pixels / 255.0)
@@ -61,7 +60,7 @@ class CoverageMulticoverAlgorithm(StringArtAlgorithm):
             line_length=self.HOUGH_LINE_LENGTH,
             line_gap=self.HOUGH_LINE_GAP
         )
-        _log(f"[coverage] Detected {len(segments)} Hough segments")
+        logger.debug(f"[coverage] Detected {len(segments)} Hough segments")
 
         # 4. Snap each segment’s endpoints to nearest anchor index
         pair_set = set()
@@ -72,12 +71,12 @@ class CoverageMulticoverAlgorithm(StringArtAlgorithm):
             if i != j:
                 pair_set.add((min(i, j), max(i, j)))
         all_pairs = list(pair_set)
-        _log(f"[coverage] Snapped segments → {len(all_pairs)} unique anchor-pairs")
+        logger.debug(f"[coverage] Snapped segments → {len(all_pairs)} unique anchor-pairs")
 
         # If Hough gave too few candidates, fall back to full enumeration
         if len(all_pairs) < 100:
             all_pairs = [(i, j) for i in range(n_anchors) for j in range(i+1, n_anchors)]
-            _log(f"[coverage] Fallback to full enumeration: {len(all_pairs)} pairs")
+            logger.debug(f"[coverage] Fallback to full enumeration: {len(all_pairs)} pairs")
 
         # 5. Precompute chord-lengths for normalization
         lengths = np.array([
@@ -93,7 +92,7 @@ class CoverageMulticoverAlgorithm(StringArtAlgorithm):
             draw = ImageDraw.Draw(img)
             draw.line([anchors[i], anchors[j]], fill=255, width=line_thickness)
             masks_flat.append(np.array(img, dtype=bool).ravel())
-        _log(f"[coverage] Precomputed {len(masks_flat)} masks")
+        logger.debug(f"[coverage] Precomputed {len(masks_flat)} masks")
 
         # 7. Precompute raw coverage for subtraction
         raw_cov = np.array([m.dot(target_flat) for m in masks_flat], dtype=np.float32)
@@ -101,19 +100,19 @@ class CoverageMulticoverAlgorithm(StringArtAlgorithm):
         # 8. Iteratively pick the best line (normalized), subtract from residual
         vectors: List[Dict[str, int]] = []
         residual = target_flat.copy()
-        _log(f"[coverage] Beginning iterative picks")
+        logger.debug("[coverage] Beginning iterative picks")
 
         for k in range(n_strings):
             raw_scores = np.array([m.dot(residual) for m in masks_flat], dtype=np.float32)
             scores = raw_scores / norm_factors
             best_idx = int(np.argmax(scores))
             if scores[best_idx] <= 0:
-                _log(f"[coverage] No positive score at iteration {k}; stopping")
+                logger.debug(f"[coverage] No positive score at iteration {k}; stopping")
                 break
 
             i, j = all_pairs[best_idx]
             vectors.append({"from": i, "to": j})
-            _log(f"[coverage] Pick {k+1}: chord ({i},{j}) score={scores[best_idx]:.4f}")
+            logger.debug(f"[coverage] Pick {k+1}: chord ({i},{j}) score={scores[best_idx]:.4f}")
 
             # subtract proportional to raw coverage
             residual = np.maximum(
@@ -121,5 +120,5 @@ class CoverageMulticoverAlgorithm(StringArtAlgorithm):
                 0.0
             )
 
-        _log(f"[coverage] Completed with {len(vectors)} vectors")
+        logger.debug(f"[coverage] Completed with {len(vectors)} vectors")
         return vectors

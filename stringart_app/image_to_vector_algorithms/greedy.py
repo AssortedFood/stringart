@@ -1,7 +1,8 @@
 # stringart_app/image_to_vector_algorithms/greedy.py
 
 import time
-from typing import List, Dict
+import logging
+from typing import List, Dict, Optional
 
 import numpy as np
 from PIL import Image, ImageDraw
@@ -9,12 +10,6 @@ from PIL import Image, ImageDraw
 from .base import StringArtAlgorithm
 from ..renderer import generate_radial_anchors
 
-# Enable or disable debug logging
-DEBUG = True
-
-def _log(msg: str):
-    if DEBUG:
-        print(msg)
 
 class GreedyAlgorithm(StringArtAlgorithm):
     # length‐normalization exponent (0 = no normalization, 1 = full length penalty)
@@ -30,10 +25,16 @@ class GreedyAlgorithm(StringArtAlgorithm):
         n_anchors: int = 180,
         n_strings: int = 200,
         line_thickness: int = 1,
-        sample_pairs: int = 1000
+        sample_pairs: int = 1000,
+        logger: Optional[logging.Logger] = None
     ) -> List[Dict[str, int]]:
-        _log(f"[greedy] Starting: anchors={n_anchors}, strings={n_strings}, "
-             f"thickness={line_thickness}, samples={sample_pairs}")
+        if logger is None:
+            logger = logging.getLogger(__name__)
+
+        logger.debug(
+            f"[greedy] Starting: anchors={n_anchors}, strings={n_strings}, "
+            f"thickness={line_thickness}, samples={sample_pairs}"
+        )
         start_time = time.time()
 
         height, width = pixels.shape
@@ -41,8 +42,8 @@ class GreedyAlgorithm(StringArtAlgorithm):
         canvas: np.ndarray = np.full_like(pixels, 255, dtype=np.int16)
 
         # 1. Generate anchors
-        anchors = generate_radial_anchors(n_anchors, width, height)
-        _log(f"[greedy] Generated {len(anchors)} anchors")
+        anchors = generate_radial_anchors(n_anchors, width, height, logger=logger)
+        logger.debug(f"[greedy] Generated {len(anchors)} anchors")
 
         # 2. Precompute all anchor‐pairs and their chord lengths
         all_pairs = [(i, j) for i in range(n_anchors) for j in range(i + 1, n_anchors)]
@@ -51,7 +52,7 @@ class GreedyAlgorithm(StringArtAlgorithm):
             for i, j in all_pairs
         ], dtype=np.float32)
         norm_factors = lengths ** self.ALPHA + 1e-6
-        _log(f"[greedy] Prepared {len(all_pairs)} candidate chords")
+        logger.debug(f"[greedy] Prepared {len(all_pairs)} candidate chords")
 
         # 3. Precompute binary masks for each line
         masks_flat = []
@@ -60,20 +61,20 @@ class GreedyAlgorithm(StringArtAlgorithm):
             draw = ImageDraw.Draw(img)
             draw.line([anchors[i], anchors[j]], fill=255, width=line_thickness)
             masks_flat.append(np.array(img, dtype=bool).ravel())
-        _log(f"[greedy] Precomputed {len(masks_flat)} masks")
+        logger.debug(f"[greedy] Precomputed {len(masks_flat)} masks")
 
         # 4. Precompute static coverage (for pruning)
         target_flat = pixels.astype(np.float32).ravel()
         static_cover = np.array([m.dot(target_flat) for m in masks_flat], dtype=np.float32)
 
         before_error = np.sum((canvas - pixels) ** 2)
-        _log(f"[greedy] Initial SSE error: {before_error:.1f}")
+        logger.debug(f"[greedy] Initial SSE error: {before_error:.1f}")
 
         vectors: List[Dict[str, int]] = []
 
         # 5. Main greedy loop
         for iteration in range(n_strings):
-            _log(f"[greedy] Iteration {iteration+1}/{n_strings}")
+            logger.debug(f"[greedy] Iteration {iteration+1}/{n_strings}")
 
             # residual: where canvas is brighter than target
             residual_flat = (canvas - pixels.astype(np.int16)).clip(min=0).ravel()
@@ -133,25 +134,27 @@ class GreedyAlgorithm(StringArtAlgorithm):
                     best_canvas = temp_canvas
 
             if best_pair is None:
-                _log(f"[greedy] No further improvement; stopping at iteration {iteration+1}")
+                logger.debug(f"[greedy] No further improvement; stopping at iteration {iteration+1}")
                 break
 
             # commit best pick
             canvas = best_canvas  # type: ignore
             vectors.append({"from": best_pair[0], "to": best_pair[1]})
             before_error -= best_improvement
-            _log(f"[greedy] Picked chord {best_pair} ΔSSE={best_improvement:.1f} norm_score={best_norm_score:.4f}")
+            logger.debug(
+                f"[greedy] Picked chord {best_pair} ΔSSE={best_improvement:.1f} norm_score={best_norm_score:.4f}"
+            )
 
             # pruning
             if len(vectors) % self.PRUNE_K == 0:
                 thresh = np.percentile(static_cover, self.PRUNE_PCT)
                 keep = static_cover >= thresh
-                all_pairs    = [p for p, k in zip(all_pairs,    keep) if k]
-                masks_flat   = [m for m, k in zip(masks_flat,   keep) if k]
+                all_pairs = [p for p, k in zip(all_pairs, keep) if k]
+                masks_flat = [m for m, k in zip(masks_flat, keep) if k]
                 norm_factors = norm_factors[keep]
                 static_cover = static_cover[keep]
-                _log(f"[greedy] Pruned to {len(all_pairs)} candidates (threshold={thresh:.2f})")
+                logger.debug(f"[greedy] Pruned to {len(all_pairs)} candidates (threshold={thresh:.2f})")
 
         elapsed = time.time() - start_time
-        _log(f"[greedy] Done in {elapsed:.2f}s; total picks={len(vectors)}")
+        logger.debug(f"[greedy] Done in {elapsed:.2f}s; total picks={len(vectors)}")
         return vectors

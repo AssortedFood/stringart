@@ -1,7 +1,9 @@
 # stringart_app/image_to_vector_algorithms/hough_greedy.py
 
+import logging
+from typing import List, Dict, Tuple, Optional
+
 import numpy as np
-from typing import List, Dict, Tuple
 from PIL import Image, ImageDraw
 
 # you need scikit-image on your PYTHONPATH for these:
@@ -25,29 +27,34 @@ class HoughGreedyAlgorithm(StringArtAlgorithm):
         n_anchors: int = 180,
         n_strings: int = 200,
         line_thickness: int = 1,
-        sample_pairs: int = 1000  # unused here
+        sample_pairs: int = 1000,  # unused here
+        logger: Optional[logging.Logger] = None
     ) -> List[Dict[str, int]]:
+        if logger is None:
+            logger = logging.getLogger(__name__)
 
         height, width = pixels.shape
+        logger.debug(f"[hough_greedy] Starting with {n_anchors} anchors and {n_strings} strings")
 
         # 1) Edge‐detect
         edges: np.ndarray = canny(pixels / 255.0, sigma=2.0)
+        logger.debug(f"[hough_greedy] Detected edges")
 
         # 2) Hough → list of ((x0,y0),(x1,y1)) segments
-        lines: List[Tuple[Tuple[float,float], Tuple[float,float]]] = \
+        lines: List[Tuple[Tuple[float, float], Tuple[float, float]]] = \
             probabilistic_hough_line(edges,
                                      threshold=10,
                                      line_length=30,
                                      line_gap=5)
+        logger.debug(f"[hough_greedy] Found {len(lines)} Hough line segments")
 
         # 3) Anchor positions, as an (n_anchors × 2) array
-        anchors_list = generate_radial_anchors(n_anchors, width, height)
+        anchors_list = generate_radial_anchors(n_anchors, width, height, logger=logger)
         anchors_arr: np.ndarray = np.array(anchors_list, dtype=float)
 
         # 4) Map each Hough segment to the nearest anchor‐pair
-        pairs: set[Tuple[int,int]] = set()
+        pairs: set[Tuple[int, int]] = set()
         for (pt0, pt1) in lines:
-            # ensure these are 2‐vectors so types line up
             p0 = np.array(pt0, dtype=float)
             p1 = np.array(pt1, dtype=float)
 
@@ -59,53 +66,61 @@ class HoughGreedyAlgorithm(StringArtAlgorithm):
             if i != j:
                 pairs.add((min(i, j), max(i, j)))
 
-        candidates: List[Tuple[int,int]] = list(pairs)
+        candidates: List[Tuple[int, int]] = list(pairs)
+        logger.debug(f"[hough_greedy] Reduced to {len(candidates)} candidate anchor pairs")
+
         if not candidates:
+            logger.warning("[hough_greedy] No candidates found; returning empty vector list")
             return []
 
-        # 5) Prepare a mutable “canvas” we’ll draw onto, and record vectors
+        # 5) Precompute binary masks for all candidate pairs
+        masks_flat = []
+        for (i, j) in candidates:
+            img = Image.new('L', (width, height), color=0)
+            draw = ImageDraw.Draw(img)
+            draw.line([anchors_list[i], anchors_list[j]], fill=255, width=line_thickness)
+            masks_flat.append(np.array(img, dtype=bool).ravel())
+
+        logger.debug(f"[hough_greedy] Precomputed {len(masks_flat)} masks")
+
+        # 6) Prepare mutable canvas and residual
         canvas = np.full_like(pixels, 255, dtype=np.int16)
-        residual = (canvas - pixels).astype(np.int32)  # for error computations
-        vectors: List[Dict[str,int]] = []
+        residual = (canvas - pixels).astype(np.float32).ravel()
 
-        for _ in range(n_strings):
-            best_delta = 0
-            best_pair: Tuple[int,int] | None = None
+        vectors: List[Dict[str, int]] = []
 
-            # try each candidate
-            for (i, j) in candidates:
-                # draw that single line on a *copy* of canvas
-                tmp_img = Image.fromarray(canvas.astype(np.uint8), mode='L')
-                ImageDraw.Draw(tmp_img).line(
-                    [tuple(anchors_list[i]), tuple(anchors_list[j])],
-                    fill=0,
-                    width=line_thickness
-                )
-                tmp_arr = np.array(tmp_img, dtype=np.int16)
+        for iteration in range(n_strings):
+            logger.debug(f"[hough_greedy] Iteration {iteration+1}/{n_strings}")
 
-                # how much does it reduce squared error?
-                new_err = np.sum((tmp_arr - pixels.astype(np.int16))**2)
-                old_err = np.sum((canvas - pixels.astype(np.int16))**2)
-                delta = old_err - new_err
+            # Compute scores for all candidates
+            scores = np.array([mask.dot(residual) for mask in masks_flat], dtype=np.float32)
 
-                if delta > best_delta:
-                    best_delta = delta
-                    best_pair = (i, j)
+            best_idx = int(np.argmax(scores))
+            best_score = scores[best_idx]
 
-            if best_pair is None:
-                # no candidate improves anything
+            if best_score <= 0:
+                logger.debug(f"[hough_greedy] No positive score at iteration {iteration+1}; stopping")
                 break
 
-            # commit that best line to our true canvas
-            i, j = best_pair
-            base_img = Image.fromarray(canvas.astype(np.uint8), mode='L')
-            ImageDraw.Draw(base_img).line(
+            i, j = candidates[best_idx]
+            logger.debug(
+                f"[hough_greedy] Pick {iteration+1}: chord ({i},{j}) score={best_score:.2f}"
+            )
+
+            # Draw the selected line onto the canvas
+            tmp_img = Image.fromarray(canvas.astype(np.uint8), mode='L')
+            draw = ImageDraw.Draw(tmp_img)
+            draw.line(
                 [tuple(anchors_list[i]), tuple(anchors_list[j])],
                 fill=0,
                 width=line_thickness
             )
-            canvas = np.array(base_img, dtype=np.int16)
+            canvas = np.array(tmp_img, dtype=np.int16)
+
+            # Update residual
+            residual = (canvas - pixels).astype(np.float32).clip(min=0).ravel()
 
             vectors.append({"from": i, "to": j})
 
+        logger.debug(f"[hough_greedy] Completed with {len(vectors)} vectors")
         return vectors

@@ -1,59 +1,37 @@
 # stringart_app/views.py
+#
+# Views for the stringart web app:
+# - Handles image uploads, previews, and job execution
+# - Streams logs and results to the frontend using Server-Sent Events (SSE)
+# - Manages per-job state (cancellation, logs, results)
+#
 
 import time
 import base64
 import json
 import threading
 import uuid
-from io import BytesIO, StringIO
+from io import BytesIO
 from pathlib import Path
-import contextlib
+from typing import BinaryIO
 
 from django.http import StreamingHttpResponse, JsonResponse, HttpResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
 from PIL import Image
 
+import logging
+
 from .renderer import generate_radial_anchors
 from .planner import generate_string_vectors, ALGORITHMS
 from .preprocessing import load_image_to_pixels
+from .sse_logging import create_sse_logger
 
-DEBUG = True
-
-# Per-job registries
+# === Per-job registries ===
+# Used to track state across multiple concurrent jobs
 JOB_CANCEL_EVENTS: dict[str, threading.Event] = {}
 JOB_LOGS: dict[str, list[str]] = {}
 JOB_RESULTS: dict[str, list[dict]] = {}
-
-
-class SSELogWriter(StringIO):
-    """
-    A StringIO subclass that discards its own buffer and
-    instead pushes every write immediately into JOB_LOGS[job_id].
-    """
-
-    def __init__(self, job_id: str):
-        super().__init__()
-        self.job_id = job_id
-
-    def write(self, s: str) -> int:
-        # Push each line into the per-job log list
-        for line in s.rstrip("\n").split("\n"):
-            JOB_LOGS[self.job_id].append(line)
-        # Discard the internal buffer by not calling super().write
-        return len(s)
-
-    def getvalue(self):
-        # Override to avoid returning anything
-        return ""
-
-
-def make_logger(job_id: str):
-    def _log(msg: str):
-        if DEBUG:
-            print(msg)
-        JOB_LOGS[job_id].append(msg.rstrip("\n"))
-    return _log
 
 
 def home(request):
@@ -63,7 +41,7 @@ def home(request):
             'selected_algorithms': list(ALGORITHMS.keys()),
         })
 
-    # preview upload
+    # Preview upload
     if request.method == 'POST' and request.FILES.getlist('images') and not request.POST.get('run_algos'):
         selected = request.POST.getlist('algorithms') or list(ALGORITHMS.keys())
         selected = [a for a in selected if a in ALGORITHMS] or list(ALGORITHMS.keys())
@@ -84,13 +62,16 @@ def home(request):
             'uploaded_images': uploaded
         })
 
-    # kickoff job
+    # Kickoff job
     if request.method == 'POST' and request.POST.get('run_algos'):
         job_id = str(uuid.uuid4())
         cancel_ev = threading.Event()
         JOB_CANCEL_EVENTS[job_id] = cancel_ev
         JOB_LOGS[job_id] = []
         JOB_RESULTS[job_id] = []
+
+        # Create a logger that writes into JOB_LOGS[job_id]
+        logger = create_sse_logger(job_id, JOB_LOGS)
 
         names = request.POST.getlist('image_name')
         datas = request.POST.getlist('image_data')
@@ -104,19 +85,17 @@ def home(request):
         n_strings = int(request.POST.get('n_strings', 300))
 
         def worker():
-            _log = make_logger(job_id)
-            sse_writer = SSELogWriter(job_id)
-
-            # Phase 1
-            _log(f"=== Phase 1: grayscale-only for {len(files)} images ===")
+            # Phase 1: grayscale-only
+            logger.info(f"=== Phase 1: grayscale-only for {len(files)} images ===")
             for name, data in files.items():
                 if cancel_ev.is_set():
-                    _log("Job cancelled.")
+                    logger.info("Job cancelled.")
                     return
                 stem = Path(name).stem
-                _log(f"[grayscale] {name}")
+                logger.info(f"[grayscale] {name}")
+                stream: BinaryIO = BytesIO(data)  # explicit type for Pylance
                 pixels = load_image_to_pixels(
-                    path=BytesIO(data),
+                    path=stream,
                     size=TARGET_SIZE,
                     levels=levels,
                     gamma=0.8,
@@ -131,36 +110,35 @@ def home(request):
                     "processed_image": base64.b64encode(buf.getvalue()).decode('ascii'),
                 })
 
-            # Phase 2
+            # Phase 2: string-art algorithms
             for algo in algos:
-                _log(f"=== Phase 2: {algo} ===")
+                logger.info(f"=== Phase 2: {algo} ===")
                 for name, data in files.items():
                     if cancel_ev.is_set():
-                        _log("Job cancelled.")
+                        logger.info("Job cancelled.")
                         return
                     stem = Path(name).stem
-                    _log(f"[{algo}] {name}")
+                    logger.info(f"[{algo}] {name}")
+                    stream: BinaryIO = BytesIO(data)  # explicit type for Pylance
                     pixels = load_image_to_pixels(
-                        path=BytesIO(data),
+                        path=stream,
                         size=TARGET_SIZE,
                         levels=levels,
                         gamma=0.8,
                         autocontrast=True
                     )
-                    # live‐stream prints from the algorithm
-                    with contextlib.redirect_stdout(sse_writer), \
-                         contextlib.redirect_stderr(sse_writer):
-                        vectors = generate_string_vectors(
-                            pixels,
-                            n_anchors=n_anchors,
-                            n_strings=n_strings,
-                            line_thickness=1,
-                            sample_pairs=1000,
-                            algorithm=algo,
-                        )
-                    # capture anchor debug
-                    with contextlib.redirect_stdout(sse_writer):
-                        anchors = generate_radial_anchors(n_anchors, *TARGET_SIZE)
+                    # Run algorithm with our SSE-aware logger
+                    vectors = generate_string_vectors(
+                        pixels,
+                        n_anchors=n_anchors,
+                        n_strings=n_strings,
+                        line_thickness=1,
+                        sample_pairs=1000,
+                        algorithm=algo,
+                        logger=logger,
+                    )
+                    # Capture anchor positions (also logs via renderer if it uses logging)
+                    anchors = generate_radial_anchors(n_anchors, *TARGET_SIZE)
 
                     JOB_RESULTS[job_id].append({
                         "phase": "algorithm",
@@ -171,7 +149,7 @@ def home(request):
                         "vectors_count": len(vectors),
                     })
 
-            _log("Job complete.")
+            logger.info("Job complete.")
 
         threading.Thread(target=worker, daemon=True).start()
         return JsonResponse({"job_id": job_id})
@@ -194,6 +172,7 @@ def stream_logs(request):
                 yield f"data: {logs[idx]}\n\n".encode()
                 idx += 1
             time.sleep(0.2)
+        # Clean up once done
         JOB_LOGS.pop(job_id, None)
         JOB_CANCEL_EVENTS.pop(job_id, None)
         JOB_RESULTS.pop(job_id, None)
