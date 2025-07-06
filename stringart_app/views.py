@@ -48,14 +48,25 @@ def home(request):
         uploaded = []
         for f in request.FILES.getlist('images'):
             data = f.read()
-            img = Image.open(BytesIO(data)).convert('RGB')
+            img = Image.open(BytesIO(data))
+
+            # If image has transparency, composite it over a white background
+            if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+                img = img.convert("RGBA")
+                white_bg = Image.new("RGBA", img.size, (255, 255, 255, 255))
+                img = Image.alpha_composite(white_bg, img)
+
+            # Drop alpha channel and ensure RGB
+            img = img.convert("RGB")
             img.thumbnail((200, 200), Image.Resampling.LANCZOS)
+
             buf = BytesIO()
             img.save(buf, format='PNG')
             uploaded.append({
                 'name': f.name,
                 'data': base64.b64encode(buf.getvalue()).decode('ascii')
             })
+
         return render(request, 'core/home.html', {
             'algorithms': list(ALGORITHMS.keys()),
             'selected_algorithms': selected,
