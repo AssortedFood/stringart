@@ -54,7 +54,6 @@
           {% csrf_token %}
           <input type="hidden" name="run_algos" value="1">
 
-          {# Hidden fields to carry image data into the second POST #}
           {% for img in uploaded_images %}
             <input type="hidden" name="image_name" value="{{ img.name }}">
             <input type="hidden" name="image_data" value="{{ img.data }}">
@@ -62,35 +61,17 @@
 
           <fieldset>
             <legend>Configuration</legend>
-
             <label>
               Shades of Grey:
-              <input
-                type="number"
-                name="levels"
-                min="2" max="256"
-                value="{{ levels|default:8 }}"
-              >
+              <input type="number" name="levels" min="2" max="256" value="{{ levels|default:8 }}">
             </label>
-
             <label>
               Number of Nodes:
-              <input
-                type="number"
-                name="n_anchors"
-                min="3" max="720"
-                value="{{ n_anchors|default:180 }}"
-              >
+              <input type="number" name="n_anchors" min="3" max="720" value="{{ n_anchors|default:180 }}">
             </label>
-
             <label>
               Number of Strings:
-              <input
-                type="number"
-                name="n_strings"
-                min="1" max="2000"
-                value="{{ n_strings|default:200 }}"
-              >
+              <input type="number" name="n_strings" min="1" max="2000" value="{{ n_strings|default:200 }}">
             </label>
           </fieldset>
 
@@ -98,12 +79,8 @@
             <legend>Run algorithms:</legend>
             {% for key in algorithms %}
               <label>
-                <input
-                  type="checkbox"
-                  name="algorithms"
-                  value="{{ key }}"
-                  {% if key in selected_algorithms %}checked{% endif %}
-                >
+                <input type="checkbox" name="algorithms" value="{{ key }}"
+                       {% if key in selected_algorithms %}checked{% endif %}>
                 {{ key|capfirst }}
               </label>
             {% endfor %}
@@ -118,13 +95,11 @@
     <!-- RESULTS STREAM -->
     <section id="results-section" style="display:none;">
       <h2>Results</h2>
-      <div id="results-container">
-        <!-- Each phase will create its own heading + .preview-grid -->
-      </div>
+      <div id="results-container"></div>
     </section>
   </div>
 
-  <!-- Logs at the bottom; only visible when scrolled into view -->
+  <!-- Logs -->
   <section id="debug-section" style="display:none;">
     <h2>Logs</h2>
     <pre id="log-content"></pre>
@@ -137,7 +112,6 @@
     let currentPhase = null, currentAlgo = null, currentRow = null;
     let currentJobId = null;
 
-    // Map to hold StringArtStreamer instances per job/algo/image
     const canvasContexts = {};
 
     function capFirst(str) {
@@ -165,7 +139,6 @@
       currentRow = null;
       canvasContexts[jobId] = {};
 
-      // Clear logs & results
       document.getElementById('log-content').textContent = '';
       const container = document.getElementById('results-container');
       container.innerHTML = '';
@@ -173,7 +146,6 @@
       document.getElementById('results-section').style.display = '';
       document.getElementById('debug-section').style.display = '';
 
-      // Stream logs
       evtSourceLogs = new EventSource(`{% url 'stream_logs' %}?job_id=${jobId}`);
       evtSourceLogs.onmessage = e => {
         const logEl = document.getElementById('log-content');
@@ -181,21 +153,18 @@
         logEl.scrollTop = logEl.scrollHeight;
       };
 
-      // Stream results
       evtSourceResults = new EventSource(`{% url 'stream_results' %}?job_id=${jobId}`);
       evtSourceResults.onmessage = e => {
         const t = JSON.parse(e.data);
 
-        // New phase header
         if (t.phase !== currentPhase) {
           currentPhase = t.phase;
           currentAlgo = null;
-          const h = document.createElement('h2');
-          h.textContent = capFirst(currentPhase);
-          container.appendChild(h);
+          const h2 = document.createElement('h2');
+          h2.textContent = capFirst(currentPhase);
+          container.appendChild(h2);
         }
 
-        // Grayscale thumbnails
         if (t.phase === 'grayscale') {
           if (!currentRow) {
             currentRow = document.createElement('div');
@@ -207,7 +176,6 @@
           img.alt = t.name;
           currentRow.appendChild(img);
 
-        // Algorithm canvases & vectors
         } else if (t.phase === 'algorithm') {
           if (t.algorithm !== currentAlgo || !currentRow) {
             currentAlgo = t.algorithm;
@@ -221,14 +189,17 @@
 
           const key = `${t.algorithm}::${t.name}`;
 
-          // On first vector: create canvas & streamer
           if (!canvasContexts[jobId][key]) {
             const cell = document.createElement('div');
-
             const details = document.createElement('details');
             const summary = document.createElement('summary');
-            summary.textContent = `Vectors for ${t.name}`;
+            summary.textContent = `${t.name} vectors`;
             details.appendChild(summary);
+
+            const pre = document.createElement('pre');
+            pre.className = 'vectors';
+            details.appendChild(pre);
+
             cell.appendChild(details);
 
             const canvas = document.createElement('canvas');
@@ -237,21 +208,18 @@
             cell.appendChild(canvas);
             currentRow.appendChild(cell);
 
-            // Use the node_count sent in the SSE payload
-            const nodeCount = t.node_count;
-            const streamer = new StringArtStreamer(canvas, nodeCount);
-            canvasContexts[jobId][key] = streamer;
+            const streamer = new StringArtStreamer(canvas, t.node_count);
+            canvasContexts[jobId][key] = { streamer, pre };
           }
 
-          // Draw incoming vector
           if (t.vector) {
-            const streamer = canvasContexts[jobId][key];
+            const { streamer, pre } = canvasContexts[jobId][key];
             streamer.addLine(t.vector.from, t.vector.to);
+            pre.textContent += `{"from":${t.vector.from},"to":${t.vector.to}}\n`;
           }
         }
       };
 
-      // Stop button
       const stopBtn = document.getElementById('stop-btn');
       stopBtn.disabled = false;
       stopBtn.onclick = async () => {
@@ -263,7 +231,6 @@
         stopBtn.disabled = true;
       };
 
-      // Auto-stop on unload
       window.addEventListener('beforeunload', () => {
         if (currentJobId) {
           navigator.sendBeacon(`/stop-job/${currentJobId}/`);
@@ -272,9 +239,10 @@
     }
 
     document.addEventListener('DOMContentLoaded', () => {
-      document.getElementById('algo-form')?.addEventListener('submit', async e => {
+      const form = document.getElementById('algo-form');
+      form?.addEventListener('submit', async e => {
         e.preventDefault();
-        currentJobId = await kickOffJob(e.target);
+        currentJobId = await kickOffJob(form);
         startStreams(currentJobId);
       });
     });
