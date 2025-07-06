@@ -1,7 +1,7 @@
 # stringart_app/image_to_vector_algorithms/coverage.py
 
 import numpy as np
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Callable
 from PIL import Image, ImageDraw
 
 from skimage.feature import canny
@@ -34,7 +34,9 @@ class CoverageMulticoverAlgorithm(StringArtAlgorithm):
         n_strings: int = 200,
         line_thickness: int = 1,
         sample_pairs: int = 1000,  # unused here
-        logger: Optional[logging.Logger] = None
+        logger: Optional[logging.Logger] = None,
+        *,
+        vector_callback: Optional[Callable[[int, int], None]] = None
     ) -> List[Dict[str, int]]:
         if logger is None:
             logger = logging.getLogger(__name__)
@@ -113,6 +115,10 @@ class CoverageMulticoverAlgorithm(StringArtAlgorithm):
             i, j = all_pairs[best_idx]
             vectors.append({"from": i, "to": j})
             logger.debug(f"[coverage] Pick {k+1}: chord ({i},{j}) score={scores[best_idx]:.4f}")
+
+            # stream this vector if a callback was provided
+            if vector_callback:
+                vector_callback(i, j)
 
             # subtract proportional to raw coverage
             residual = np.maximum(

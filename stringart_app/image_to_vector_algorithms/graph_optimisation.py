@@ -1,7 +1,7 @@
 # stringart_app/image_to_vector_algorithms/graph_optimisation.py
 
 import numpy as np
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Callable
 from PIL import Image, ImageDraw
 
 from .base import StringArtAlgorithm
@@ -28,7 +28,9 @@ class GraphOptimisationAlgorithm(StringArtAlgorithm):
         n_strings: int = 200,
         line_thickness: int = 1,
         sample_pairs: int = 1000,  # unused, kept for signature compatibility
-        logger: Optional[logging.Logger] = None
+        logger: Optional[logging.Logger] = None,
+        *,
+        vector_callback: Optional[Callable[[int, int], None]] = None
     ) -> List[Dict[str, int]]:
         if logger is None:
             logger = logging.getLogger(__name__)
@@ -89,6 +91,8 @@ class GraphOptimisationAlgorithm(StringArtAlgorithm):
             if val is not None and val >= 0.5:
                 i, j = all_pairs[k]
                 vectors.append({"from": i, "to": j})
-        logger.debug(f"[graph_optimisation] Completed with {len(vectors)} vectors")
+                if vector_callback:
+                    vector_callback(i, j)
 
+        logger.debug(f"[graph_optimisation] Completed with {len(vectors)} vectors")
         return vectors

@@ -3,7 +3,7 @@
 import pkgutil
 import importlib
 import inspect
-from typing import Dict, Type
+from typing import Dict, Type, Callable, Optional
 import numpy as np
 
 from .base import StringArtAlgorithm
@@ -39,9 +39,12 @@ def generate_string_vectors(
     line_thickness: int = 1,
     sample_pairs: int = 1000,
     algorithm: str = "greedy",
+    *,
+    vector_callback: Optional[Callable[[int, int], None]] = None,
 ) -> list[dict[str, int]]:
     """
     Dispatch to whichever StringArtAlgorithm you’ve registered.
+    Optionally stream each vector via vector_callback(from_idx, to_idx).
     """
     algo = ALGORITHMS.get(algorithm)
     if algo is None:
@@ -53,4 +56,5 @@ def generate_string_vectors(
         n_strings=n_strings,
         line_thickness=line_thickness,
         sample_pairs=sample_pairs,
+        vector_callback=vector_callback,
     )

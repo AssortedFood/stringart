@@ -3,6 +3,7 @@
 # Views for the stringart web app:
 # - Handles image uploads, previews, and job execution
 # - Streams logs and results to the frontend using Server-Sent Events (SSE)
+# - Streams each string-art vector as it's generated
 # - Manages per-job state (cancellation, logs, results)
 #
 
@@ -104,7 +105,7 @@ def home(request):
                     return
                 stem = Path(name).stem
                 logger.info(f"[grayscale] {name}")
-                stream: BinaryIO = BytesIO(data)  # explicit type for Pylance
+                stream: BinaryIO = BytesIO(data)
                 pixels = load_image_to_pixels(
                     path=stream,
                     size=TARGET_SIZE,
@@ -121,7 +122,7 @@ def home(request):
                     "processed_image": base64.b64encode(buf.getvalue()).decode('ascii'),
                 })
 
-            # Phase 2: string-art algorithms
+            # Phase 2: string-art algorithms, streaming each vector
             for algo in algos:
                 logger.info(f"=== Phase 2: {algo} ===")
                 for name, data in files.items():
@@ -130,7 +131,7 @@ def home(request):
                         return
                     stem = Path(name).stem
                     logger.info(f"[{algo}] {name}")
-                    stream: BinaryIO = BytesIO(data)  # explicit type for Pylance
+                    stream: BinaryIO = BytesIO(data)
                     pixels = load_image_to_pixels(
                         path=stream,
                         size=TARGET_SIZE,
@@ -138,8 +139,22 @@ def home(request):
                         gamma=0.8,
                         autocontrast=True
                     )
-                    # Run algorithm with our SSE-aware logger
-                    vectors = generate_string_vectors(
+
+                    # Precompute anchors once
+                    anchors = generate_radial_anchors(n_anchors, *TARGET_SIZE)
+
+                    # Define callback to stream each vector pick
+                    def on_vector(frm: int, to: int):
+                        JOB_RESULTS[job_id].append({
+                            "phase": "algorithm",
+                            "algorithm": algo,
+                            "name": stem,
+                            "anchors_json": json.dumps(anchors),
+                            "vector": {"from": frm, "to": to},
+                        })
+
+                    # Run algorithm, streaming via callback
+                    generate_string_vectors(
                         pixels,
                         n_anchors=n_anchors,
                         n_strings=n_strings,
@@ -147,18 +162,8 @@ def home(request):
                         sample_pairs=1000,
                         algorithm=algo,
                         logger=logger,
+                        vector_callback=on_vector
                     )
-                    # Capture anchor positions (also logs via renderer if it uses logging)
-                    anchors = generate_radial_anchors(n_anchors, *TARGET_SIZE)
-
-                    JOB_RESULTS[job_id].append({
-                        "phase": "algorithm",
-                        "algorithm": algo,
-                        "name": stem,
-                        "anchors_json": json.dumps(anchors),
-                        "vectors_json": json.dumps(vectors),
-                        "vectors_count": len(vectors),
-                    })
 
             logger.info("Job complete.")
 

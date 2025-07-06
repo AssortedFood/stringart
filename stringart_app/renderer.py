@@ -14,7 +14,8 @@ def generate_radial_anchors(
     logger: Optional[logging.Logger] = None
 ) -> list[tuple[float, float]]:
     """
-    Compute evenly spaced points around a circle (the "anchors").
+    Compute evenly spaced points around a circle (the "anchors"), 
+    with index 0 at 12 o'clock (North) and increasing clockwise.
     """
     if logger is None:
         logger = logging.getLogger(__name__)
@@ -25,15 +26,16 @@ def generate_radial_anchors(
 
     cx, cy = width / 2, height / 2
     radius = min(cx, cy) - margin
-    anchors = [
-        (
-            cx + radius * math.cos(2 * math.pi * i / n_anchors),
-            cy + radius * math.sin(2 * math.pi * i / n_anchors),
-        )
-        for i in range(n_anchors)
-    ]
 
-    logger.debug(f"Generated {len(anchors)} anchors")
+    anchors: list[tuple[float, float]] = []
+    for i in range(n_anchors):
+        # start at north (12 o'clock) and go clockwise
+        angle = 2 * math.pi * i / n_anchors - math.pi / 2
+        x = cx + radius * math.cos(angle)
+        y = cy + radius * math.sin(angle)
+        anchors.append((x, y))
+
+    logger.debug(f"Generated {len(anchors)} anchors (0° at North)")
     return anchors
 
 

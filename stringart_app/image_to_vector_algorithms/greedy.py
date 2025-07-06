@@ -2,7 +2,7 @@
 
 import time
 import logging
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Callable
 
 import numpy as np
 from PIL import Image, ImageDraw
@@ -26,7 +26,9 @@ class GreedyAlgorithm(StringArtAlgorithm):
         n_strings: int = 200,
         line_thickness: int = 1,
         sample_pairs: int = 1000,
-        logger: Optional[logging.Logger] = None
+        logger: Optional[logging.Logger] = None,
+        *,
+        vector_callback: Optional[Callable[[int, int], None]] = None
     ) -> List[Dict[str, int]]:
         if logger is None:
             logger = logging.getLogger(__name__)
@@ -140,10 +142,15 @@ class GreedyAlgorithm(StringArtAlgorithm):
             # commit best pick
             canvas = best_canvas  # type: ignore
             vectors.append({"from": best_pair[0], "to": best_pair[1]})
-            before_error -= best_improvement
             logger.debug(
                 f"[greedy] Picked chord {best_pair} ΔSSE={best_improvement:.1f} norm_score={best_norm_score:.4f}"
             )
+
+            # stream this vector if callback provided
+            if vector_callback:
+                vector_callback(best_pair[0], best_pair[1])
+
+            before_error -= best_improvement
 
             # pruning
             if len(vectors) % self.PRUNE_K == 0:

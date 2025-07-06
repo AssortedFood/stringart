@@ -1,6 +1,8 @@
+# stringart_app/image_to_vector_algorithms/memetic.py
+
 import random
 import logging
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Callable
 import numpy as np
 from PIL import Image, ImageDraw
 
@@ -25,7 +27,9 @@ class MemeticAlgorithm(StringArtAlgorithm):
         n_strings: int = 200,
         line_thickness: int = 1,
         sample_pairs: int = 1000,
-        logger: Optional[logging.Logger] = None
+        logger: Optional[logging.Logger] = None,
+        *,
+        vector_callback: Optional[Callable[[int, int], None]] = None
     ) -> List[Dict[str, int]]:
         if logger is None:
             logger = logging.getLogger(__name__)
@@ -48,7 +52,6 @@ class MemeticAlgorithm(StringArtAlgorithm):
             draw = ImageDraw.Draw(img)
             draw.line([anchors[i], anchors[j]], fill=255, width=line_thickness)
             masks_flat.append(np.array(img, dtype=bool).ravel())
-
         logger.debug(f"[memetic] Precomputed {len(masks_flat)} masks")
 
         # Convert target to float array for SSE computation
@@ -60,13 +63,10 @@ class MemeticAlgorithm(StringArtAlgorithm):
             squared-error against the target image. Returns SSE as Python float.
             """
             canvas_flat = np.full_like(target_flat, 255.0, dtype=np.float32)
-
             for gene in chrom:
                 canvas_flat[masks_flat[gene]] = 0.0  # draw black lines
-
             residual = canvas_flat - target_flat
-            sse = np.sum(residual ** 2)
-            return float(sse)  # ensure Python float for type safety
+            return float(np.sum(residual ** 2))
 
         # Initialize population: each individual is a random set of unique genes
         population: List[List[int]] = [
@@ -77,30 +77,22 @@ class MemeticAlgorithm(StringArtAlgorithm):
 
         # Evolutionary loop
         for gen in range(self.GENERATIONS):
-            # Evaluate & sort by ascending error (lower is better)
             population.sort(key=render_score)
             best_sse = render_score(population[0])
             logger.debug(f"[memetic] Generation {gen+1}: best SSE={best_sse:.2f}")
 
-            # Elitism: keep top ELITE_FRACTION
             elite_size = max(1, int(self.POP_SIZE * self.ELITE_FRACTION))
             next_gen = population[:elite_size]
 
-            # Fill back up with offspring
             while len(next_gen) < self.POP_SIZE:
                 parent1, parent2 = random.sample(population[:10], 2)
-                # One-point crossover
                 crossover_point = random.randint(1, n_strings - 1)
                 child = parent1[:crossover_point] + [
                     gene for gene in parent2 if gene not in parent1[:crossover_point]
                 ]
-
-                # Mutation: random gene replacement
                 for idx in range(n_strings):
                     if random.random() < self.MUTATION_RATE:
                         child[idx] = random.randrange(genome_length)
-
-                # Local repair: fix duplicates
                 seen: set[int] = set()
                 for idx in range(len(child)):
                     if child[idx] in seen:
@@ -109,17 +101,19 @@ class MemeticAlgorithm(StringArtAlgorithm):
                             replacement = random.randrange(genome_length)
                         child[idx] = replacement
                     seen.add(child[idx])
-
                 next_gen.append(child)
 
             population = next_gen
 
-        # Best individual is first in the final sorted population
         best_genome = population[0]
         logger.debug(f"[memetic] Finished; best SSE={render_score(best_genome):.2f}")
 
-        # Convert gene indices back to {"from": i, "to": j} dicts
-        return [
-            {"from": all_pairs[g][0], "to": all_pairs[g][1]}
-            for g in best_genome
-        ]
+        # Convert gene indices back to vectors, streaming via callback if provided
+        vectors: List[Dict[str, int]] = []
+        for gene in best_genome:
+            i, j = all_pairs[gene]
+            vectors.append({"from": i, "to": j})
+            if vector_callback:
+                vector_callback(i, j)
+
+        return vectors

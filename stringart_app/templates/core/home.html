@@ -132,11 +132,12 @@
 
   <script type="module" src="{% static 'js/main.js' %}"></script>
   <script type="module">
-    import { createPhysicsRenderer } from "{% static 'js/physics_renderer.js' %}";
-
     let evtSourceLogs, evtSourceResults;
     let currentPhase = null, currentAlgo = null, currentRow = null;
     let currentJobId = null;
+
+    // Map to hold contexts for each algorithm/image combo
+    const canvasContexts = {};
 
     function capFirst(str) {
       return str.charAt(0).toUpperCase() + str.slice(1);
@@ -161,6 +162,7 @@
       currentPhase = null;
       currentAlgo = null;
       currentRow = null;
+      canvasContexts[jobId] = {};
 
       // Clear logs & results
       document.getElementById('log-content').textContent = '';
@@ -182,6 +184,8 @@
       evtSourceResults = new EventSource(`{% url 'stream_results' %}?job_id=${jobId}`);
       evtSourceResults.onmessage = e => {
         const t = JSON.parse(e.data);
+
+        // Phase headers
         if (t.phase !== currentPhase) {
           currentPhase = t.phase;
           currentAlgo = null;
@@ -189,6 +193,8 @@
           h.textContent = capFirst(currentPhase);
           container.appendChild(h);
         }
+
+        // Grayscale previews
         if (t.phase === 'grayscale') {
           if (!currentRow) {
             currentRow = document.createElement('div');
@@ -199,8 +205,11 @@
           img.src = `data:image/png;base64,${t.processed_image}`;
           img.alt = t.name;
           currentRow.appendChild(img);
+
+        // Algorithm streaming
         } else if (t.phase === 'algorithm') {
-          if (t.algorithm !== currentAlgo) {
+          // New algorithm section
+          if (t.algorithm !== currentAlgo || !currentRow) {
             currentAlgo = t.algorithm;
             currentRow = document.createElement('div');
             currentRow.className = 'preview-grid';
@@ -209,34 +218,47 @@
             container.appendChild(h3);
             container.appendChild(currentRow);
           }
-          const cell = document.createElement('div');
 
-          const details = document.createElement('details');
-          const summary = document.createElement('summary');
-          summary.textContent = `Show vectors (${t.vectors_count})`;
-          const preVec = document.createElement('pre');
-          preVec.className = 'vectors';
-          preVec.textContent = JSON.stringify(JSON.parse(t.vectors_json), null, 2);
-          details.appendChild(summary);
-          details.appendChild(preVec);
-          cell.appendChild(details);
+          const key = `${t.algorithm}::${t.name}`;
+          // On first vector event for this image, create its canvas
+          if (!canvasContexts[jobId][key]) {
+            const cell = document.createElement('div');
 
-          const canvas = document.createElement('canvas');
-          canvas.className = 'physicsCanvas';
-          canvas.width = 200; canvas.height = 200;
-          canvas.dataset.anchors = t.anchors_json;
-          canvas.dataset.vectors = t.vectors_json;
-          cell.appendChild(canvas);
+            const details = document.createElement('details');
+            const summary = document.createElement('summary');
+            summary.textContent = `Vectors for ${t.name}`;
+            details.appendChild(summary);
+            cell.appendChild(details);
 
-          setTimeout(() => {
-            createPhysicsRenderer(
-              canvas,
-              JSON.parse(canvas.dataset.anchors),
-              JSON.parse(canvas.dataset.vectors)
-            );
-          }, 0);
+            const canvas = document.createElement('canvas');
+            canvas.width = 200;
+            canvas.height = 200;
+            canvas.dataset.anchors = t.anchors_json;
+            cell.appendChild(canvas);
+            currentRow.appendChild(cell);
 
-          currentRow.appendChild(cell);
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.lineWidth = 1;
+            // We'll set strokeStyle later once we know k_max, but for now solid
+            ctx.strokeStyle = 'rgba(0,0,0,1)';
+
+            // Parse anchors
+            const anchors = JSON.parse(t.anchors_json);
+            canvasContexts[jobId][key] = { ctx, anchors };
+          }
+
+          // Draw single vector
+          if (t.vector) {
+            const { ctx, anchors } = canvasContexts[jobId][key];
+            const { from, to } = t.vector;
+            const A = anchors[from];
+            const B = anchors[to];
+            ctx.beginPath();
+            ctx.moveTo(A[0], A[1]);
+            ctx.lineTo(B[0], B[1]);
+            ctx.stroke();
+          }
         }
       };
 

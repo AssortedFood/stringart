@@ -1,7 +1,7 @@
 # stringart_app/image_to_vector_algorithms/hough_greedy.py
 
 import logging
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Callable
 
 import numpy as np
 from PIL import Image, ImageDraw
@@ -28,7 +28,9 @@ class HoughGreedyAlgorithm(StringArtAlgorithm):
         n_strings: int = 200,
         line_thickness: int = 1,
         sample_pairs: int = 1000,  # unused here
-        logger: Optional[logging.Logger] = None
+        logger: Optional[logging.Logger] = None,
+        *,
+        vector_callback: Optional[Callable[[int, int], None]] = None
     ) -> List[Dict[str, int]]:
         if logger is None:
             logger = logging.getLogger(__name__)
@@ -107,6 +109,11 @@ class HoughGreedyAlgorithm(StringArtAlgorithm):
                 f"[hough_greedy] Pick {iteration+1}: chord ({i},{j}) score={best_score:.2f}"
             )
 
+            # Append and callback
+            vectors.append({"from": i, "to": j})
+            if vector_callback:
+                vector_callback(i, j)
+
             # Draw the selected line onto the canvas
             tmp_img = Image.fromarray(canvas.astype(np.uint8), mode='L')
             draw = ImageDraw.Draw(tmp_img)
@@ -119,8 +126,6 @@ class HoughGreedyAlgorithm(StringArtAlgorithm):
 
             # Update residual
             residual = (canvas - pixels).astype(np.float32).clip(min=0).ravel()
-
-            vectors.append({"from": i, "to": j})
 
         logger.debug(f"[hough_greedy] Completed with {len(vectors)} vectors")
         return vectors
