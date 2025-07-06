@@ -7,7 +7,6 @@ import logging
 # pull in your registry
 from .image_to_vector_algorithms import ALGORITHMS
 
-
 def generate_string_vectors(
     pixels: np.ndarray,
     n_anchors: int = 180,

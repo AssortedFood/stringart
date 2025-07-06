@@ -93,7 +93,7 @@ def home(request):
         algos = request.POST.getlist('algorithms') or list(ALGORITHMS.keys())
         algos = [a for a in algos if a in ALGORITHMS] or list(ALGORITHMS.keys())
         n_anchors = int(request.POST.get('n_anchors', 180))
-        n_strings = int(request.POST.get('n_strings', 300))
+        n_strings = int(request.POST.get('n_strings', 200))
 
         def worker():
             # Phase 1: grayscale-only
